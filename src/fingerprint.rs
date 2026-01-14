@@ -7,6 +7,7 @@
 
 use crate::types::{FileEntry, FileType, NormalizationOptions};
 use anyhow::Result;
+use log::warn;
 use rayon::prelude::*;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
@@ -20,8 +21,8 @@ pub fn compute_fingerprints(
 ) {
     entries.par_iter_mut().for_each(|entry| {
         if let Err(e) = compute_fingerprint_for_entry(entry, normalization) {
-            eprintln!(
-                "Warning: Failed to fingerprint {}: {}",
+            warn!(
+                "Failed to fingerprint {}: {}",
                 entry.path.display(),
                 e
             );
@@ -66,8 +67,27 @@ fn compute_fingerprint_for_entry(
 
 /// Compute simhash fingerprint for text content
 ///
-/// Simhash is a locality-sensitive hash that produces similar hashes
-/// for similar content. We use 3-gram shingles over normalized lines.
+/// Simhash is a locality-sensitive hash (LSH) that produces similar hashes
+/// for similar content. This enables O(1) similarity estimation using
+/// Hamming distance.
+///
+/// ## Algorithm
+///
+/// 1. **Normalize**: Apply text normalization (case, whitespace, etc.)
+/// 2. **Shingle**: Generate n-gram tokens (both word-level and line-level)
+/// 3. **Hash**: Hash each shingle to a 64-bit value
+/// 4. **Aggregate**: For each bit position, sum +1 for 1-bits, -1 for 0-bits
+/// 5. **Threshold**: Final hash has 1 where sum > 0, 0 otherwise
+///
+/// ## Properties
+///
+/// - Similar documents produce hashes with low Hamming distance
+/// - Hamming distance of 3-5 typically indicates >90% similarity
+/// - Completely different documents have ~32 bit differences (50%)
+///
+/// ## References
+///
+/// - Charikar, M. S. (2002). "Similarity estimation techniques from rounding algorithms"
 pub fn compute_simhash(text: &str, normalization: &NormalizationOptions) -> u64 {
     let lines = normalize_text(text, normalization);
 

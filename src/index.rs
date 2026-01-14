@@ -5,6 +5,8 @@
 
 use crate::types::{FileEntry, FileType};
 use anyhow::{Context, Result};
+use globset::{Glob, GlobSetBuilder};
+use log::warn;
 use rayon::prelude::*;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -12,22 +14,48 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 /// Index files from a path (file or directory)
-pub fn index_path(path: &Path) -> Result<Vec<FileEntry>> {
+///
+/// # Arguments
+/// * `path` - The file or directory path to index
+/// * `exclude_patterns` - Glob patterns for paths to exclude (e.g., `["*.tmp", "node_modules/"]`)
+pub fn index_path(path: &Path, exclude_patterns: &[String]) -> Result<Vec<FileEntry>> {
     if path.is_file() {
         let entry = index_single_file(path)?;
         Ok(vec![entry])
     } else if path.is_dir() {
-        index_directory(path)
+        index_directory(path, exclude_patterns)
     } else {
         anyhow::bail!("Path does not exist or is not accessible: {}", path.display());
     }
 }
 
 /// Index all files in a directory recursively
-pub fn index_directory(dir: &Path) -> Result<Vec<FileEntry>> {
+///
+/// Applies exclusion patterns to filter out unwanted files and directories.
+pub fn index_directory(dir: &Path, exclude_patterns: &[String]) -> Result<Vec<FileEntry>> {
+    // Build glob set for exclusion patterns
+    let exclude_set = build_exclude_set(exclude_patterns)?;
+
     let paths: Vec<PathBuf> = WalkDir::new(dir)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|e| {
+            // Check if this entry should be excluded
+            let path = e.path();
+            if let Some(ref glob_set) = exclude_set {
+                // Check both the full path and relative path
+                if glob_set.is_match(path) {
+                    return false;
+                }
+                // Also check with just the filename for simple patterns like "*.tmp"
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if glob_set.is_match(name) {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(|e| e.path().to_path_buf())
@@ -43,6 +71,28 @@ pub fn index_directory(dir: &Path) -> Result<Vec<FileEntry>> {
     entries.sort_by(|a, b| a.path.cmp(&b.path));
 
     Ok(entries)
+}
+
+/// Build a glob set from exclusion patterns
+fn build_exclude_set(patterns: &[String]) -> Result<Option<globset::GlobSet>> {
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        match Glob::new(pattern) {
+            Ok(glob) => {
+                builder.add(glob);
+            }
+            Err(e) => {
+                warn!("Invalid exclude pattern '{}': {}", pattern, e);
+            }
+        }
+    }
+
+    let set = builder.build().context("Failed to build exclude glob set")?;
+    Ok(Some(set))
 }
 
 /// Index a single file
@@ -196,13 +246,6 @@ fn try_detect_structured(line: &str, delimiter: char) -> Option<Vec<String>> {
     } else {
         None
     }
-}
-
-/// Get the relative path from a base directory
-pub fn relative_path(path: &Path, base: &Path) -> PathBuf {
-    path.strip_prefix(base)
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]

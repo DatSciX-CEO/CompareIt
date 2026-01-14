@@ -106,6 +106,18 @@ enum Commands {
         #[arg(long, default_value = "1048576")]
         max_diff_bytes: usize,
 
+        /// Exclude patterns (glob syntax, e.g., "*.tmp", "node_modules/")
+        #[arg(long, value_delimiter = ',')]
+        exclude: Vec<String>,
+
+        /// Columns to ignore in structured comparison (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        ignore_columns: Vec<String>,
+
+        /// Regex pattern for lines to ignore in text comparison
+        #[arg(long)]
+        ignore_regex: Option<String>,
+
         /// Output JSONL file path
         #[arg(long)]
         out_jsonl: Option<PathBuf>,
@@ -140,6 +152,9 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
+    // Initialize logger (controlled by RUST_LOG env var)
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -159,6 +174,9 @@ fn main() -> Result<()> {
             ignore_case,
             skip_empty_lines,
             max_diff_bytes,
+            exclude,
+            ignore_columns,
+            ignore_regex,
             out_jsonl,
             out_csv,
             out_dir,
@@ -184,6 +202,9 @@ fn main() -> Result<()> {
                 output_csv: out_csv,
                 output_dir: out_dir,
                 verbose,
+                exclude_patterns: exclude,
+                ignore_columns,
+                ignore_regex,
             };
 
             run_compare(&path1, &path2, &config)?;
@@ -208,8 +229,8 @@ fn run_compare(path1: &PathBuf, path2: &PathBuf, config: &CompareConfig) -> Resu
 
     // Stage 1: Index files
     println!("\n{} Indexing files...", style("[1/4]").bold());
-    let mut files1 = index_path(path1).context("Failed to index path1")?;
-    let mut files2 = index_path(path2).context("Failed to index path2")?;
+    let mut files1 = index_path(path1, &config.exclude_patterns).context("Failed to index path1")?;
+    let mut files2 = index_path(path2, &config.exclude_patterns).context("Failed to index path2")?;
 
     println!(
         "  Found {} files in path1, {} files in path2",
@@ -433,7 +454,7 @@ fn create_progress_bar(total: u64) -> ProgressBar {
     pb.set_style(
         ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-            .unwrap()
+            .expect("Invalid progress bar template - this is a bug in CompareIt")
             .progress_chars("█▓░"),
     );
     pb
@@ -478,63 +499,150 @@ fn display_summary_table(summary: &types::ComparisonSummary) {
     println!("{table}");
 }
 
-/// Display detailed results table
+/// Display detailed results grouped by status
 fn display_results_table(results: &[ComparisonResult], verbose: bool) {
+    // Group results by status
+    let mut identical: Vec<&ComparisonResult> = Vec::new();
+    let mut modified: Vec<&ComparisonResult> = Vec::new();
+    let mut errors: Vec<&ComparisonResult> = Vec::new();
+
+    for result in results {
+        match result {
+            ComparisonResult::Error { .. } => errors.push(result),
+            _ if result.is_identical() => identical.push(result),
+            _ => modified.push(result),
+        }
+    }
+
+    // Sort modified by similarity (ascending, so most different first)
+    modified.sort_by(|a, b| {
+        a.similarity_score()
+            .partial_cmp(&b.similarity_score())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Display Identical Files (collapsed by default)
+    if !identical.is_empty() {
+        println!(
+            "\n{} {} {}",
+            style("✓").green(),
+            style("Identical Files").green().bold(),
+            style(format!("({})", identical.len())).dim()
+        );
+        if verbose {
+            display_file_list(&identical, 10);
+        } else {
+            println!("  {} Use --verbose to list all", style("...").dim());
+        }
+    }
+
+    // Display Modified Files (detailed)
+    if !modified.is_empty() {
+        println!(
+            "\n{} {} {}",
+            style("≠").yellow(),
+            style("Modified Files").yellow().bold(),
+            style(format!("({})", modified.len())).dim()
+        );
+        display_detailed_table(&modified, verbose);
+
+        // Show diff snippets for high-similarity files in verbose mode
+        if verbose {
+            display_diff_snippets(&modified);
+        }
+    }
+
+    // Display Errors
+    if !errors.is_empty() {
+        println!(
+            "\n{} {} {}",
+            style("✗").red(),
+            style("Errors").red().bold(),
+            style(format!("({})", errors.len())).dim()
+        );
+        display_error_list(&errors);
+    }
+}
+
+/// Display a simple list of file pairs
+fn display_file_list(results: &[&ComparisonResult], limit: usize) {
+    for result in results.iter().take(limit) {
+        let (file1, file2) = result.file_paths();
+        println!(
+            "  {} {} {}",
+            style(truncate_path(file1, 35)).dim(),
+            style("↔").dim(),
+            style(truncate_path(file2, 35)).dim()
+        );
+    }
+    if results.len() > limit {
+        println!(
+            "  {} ({} more...)",
+            style("...").dim(),
+            results.len() - limit
+        );
+    }
+}
+
+/// Display detailed table for modified files
+fn display_detailed_table(results: &[&ComparisonResult], verbose: bool) {
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS);
 
     table.set_header(vec![
-        "Status",
         "File 1",
         "File 2",
         "Similarity",
+        "Type",
         "Common",
         "Only F1",
         "Only F2",
     ]);
 
-    let limit = if verbose { results.len() } else { 20.min(results.len()) };
+    let limit = if verbose { results.len() } else { 15.min(results.len()) };
 
     for result in results.iter().take(limit) {
         let (file1, file2) = result.file_paths();
         let sim = result.similarity_score();
-        let identical = result.is_identical();
 
-        let status = if identical {
-            Cell::new("✓").fg(Color::Green)
-        } else {
-            match result {
-                ComparisonResult::Error { .. } => Cell::new("✗").fg(Color::Red),
-                _ => Cell::new("≠").fg(Color::Yellow),
-            }
-        };
-
-        let (common, only1, only2) = match result {
+        let (type_str, common, only1, only2) = match result {
             ComparisonResult::Text(r) => (
+                "text",
                 r.common_lines.to_string(),
                 r.only_in_file1.to_string(),
                 r.only_in_file2.to_string(),
             ),
             ComparisonResult::Structured(r) => (
+                "csv",
                 r.common_records.to_string(),
                 r.only_in_file1.to_string(),
                 r.only_in_file2.to_string(),
             ),
             ComparisonResult::HashOnly { identical, .. } => (
+                "binary",
                 if *identical { "1" } else { "0" }.to_string(),
                 "0".to_string(),
                 "0".to_string(),
             ),
-            ComparisonResult::Error { error, .. } => ("-".to_string(), "-".to_string(), error.clone()),
+            ComparisonResult::Error { .. } => ("error", "-".to_string(), "-".to_string(), "-".to_string()),
+        };
+
+        // Color code similarity
+        let sim_color = if sim >= 0.9 {
+            Color::Green
+        } else if sim >= 0.5 {
+            Color::Yellow
+        } else {
+            Color::Red
         };
 
         table.add_row(vec![
-            status,
-            Cell::new(truncate_path(file1, 30)),
-            Cell::new(truncate_path(file2, 30)),
-            Cell::new(format!("{:.1}%", sim * 100.0)),
+            Cell::new(truncate_path(file1, 28)),
+            Cell::new(truncate_path(file2, 28)),
+            Cell::new(format!("{:.1}%", sim * 100.0)).fg(sim_color),
+            Cell::new(type_str),
             Cell::new(common),
             Cell::new(only1),
             Cell::new(only2),
@@ -543,8 +651,8 @@ fn display_results_table(results: &[ComparisonResult], verbose: bool) {
 
     if results.len() > limit {
         table.add_row(vec![
-            Cell::new("..."),
-            Cell::new(format!("({} more rows)", results.len() - limit)),
+            Cell::new(format!("... {} more rows ...", results.len() - limit)),
+            Cell::new(""),
             Cell::new(""),
             Cell::new(""),
             Cell::new(""),
@@ -554,6 +662,63 @@ fn display_results_table(results: &[ComparisonResult], verbose: bool) {
     }
 
     println!("{table}");
+}
+
+/// Display diff snippets for modified files with high similarity
+fn display_diff_snippets(results: &[&ComparisonResult]) {
+    let high_sim_results: Vec<&&ComparisonResult> = results
+        .iter()
+        .filter(|r| {
+            let sim = r.similarity_score();
+            sim >= 0.9 && sim < 1.0
+        })
+        .take(3) // Show at most 3 diff snippets
+        .collect();
+
+    if high_sim_results.is_empty() {
+        return;
+    }
+
+    println!("\n{}", style("Diff Snippets (High Similarity)").cyan().bold());
+    println!("{}", style("─".repeat(50)).dim());
+
+    for result in high_sim_results {
+        if let ComparisonResult::Text(r) = result {
+            let (file1, _file2) = result.file_paths();
+            println!("\n{}", style(truncate_path(file1, 50)).bold());
+
+            // Show first 5 lines of diff
+            let diff_lines: Vec<&str> = r.detailed_diff.lines().take(8).collect();
+            for line in diff_lines {
+                if line.starts_with('+') && !line.starts_with("+++") {
+                    println!("  {}", style(line).green());
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    println!("  {}", style(line).red());
+                } else if !line.starts_with("@@") && !line.starts_with("---") && !line.starts_with("+++") {
+                    println!("  {}", style(line).dim());
+                }
+            }
+
+            if r.diff_truncated || r.detailed_diff.lines().count() > 8 {
+                println!("  {}", style("... (truncated)").dim());
+            }
+        }
+    }
+}
+
+/// Display error list
+fn display_error_list(results: &[&ComparisonResult]) {
+    for result in results {
+        if let ComparisonResult::Error { file1_path, file2_path, error } = result {
+            println!(
+                "  {} {} {}: {}",
+                style(truncate_path(file1_path, 25)).dim(),
+                style("↔").dim(),
+                style(truncate_path(file2_path, 25)).dim(),
+                style(error).red()
+            );
+        }
+    }
 }
 
 /// Truncate a path for display

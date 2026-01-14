@@ -1,11 +1,13 @@
 //! Text-based file comparison
 //!
 //! This module implements line-based diff comparison using the `similar` crate,
-//! with support for various normalization options and similarity scoring.
+//! with support for various normalization options, regex filtering, and similarity scoring.
 
 use crate::fingerprint::read_normalized_lines;
 use crate::types::{CompareConfig, FileEntry, SimilarityAlgorithm, TextComparisonResult};
 use anyhow::Result;
+use log::warn;
+use regex::Regex;
 use similar::{ChangeTag, TextDiff};
 use std::fmt::Write;
 use strsim::jaro_winkler;
@@ -17,8 +19,17 @@ pub fn compare_text_files(
     config: &CompareConfig,
 ) -> Result<TextComparisonResult> {
     // Read and normalize content
-    let lines1 = read_normalized_lines(&file1.path, &config.normalization)?;
-    let lines2 = read_normalized_lines(&file2.path, &config.normalization)?;
+    let mut lines1 = read_normalized_lines(&file1.path, &config.normalization)?;
+    let mut lines2 = read_normalized_lines(&file2.path, &config.normalization)?;
+
+    // Apply regex filtering if specified
+    if let Some(ref pattern) = config.ignore_regex {
+        let re = compile_ignore_regex(pattern);
+        if let Some(ref regex) = re {
+            lines1 = apply_regex_filter(&lines1, regex);
+            lines2 = apply_regex_filter(&lines2, regex);
+        }
+    }
 
     // Perform diff
     let text1 = lines1.join("\n");
@@ -214,9 +225,26 @@ fn encode_ranges(positions: &[usize]) -> String {
     ranges.join(",")
 }
 
-/// Quick check if two files are identical without full diff
-pub fn files_identical(file1: &FileEntry, file2: &FileEntry) -> bool {
-    !file1.content_hash.is_empty() && file1.content_hash == file2.content_hash
+/// Compile a regex pattern for line filtering, logging a warning if invalid
+fn compile_ignore_regex(pattern: &str) -> Option<Regex> {
+    match Regex::new(pattern) {
+        Ok(re) => Some(re),
+        Err(e) => {
+            warn!("Invalid ignore_regex pattern '{}': {}", pattern, e);
+            None
+        }
+    }
+}
+
+/// Apply regex filter to lines, replacing matches with `<IGNORED>`
+///
+/// This allows comparing files while ignoring specific content like timestamps,
+/// generated IDs, or other dynamic values.
+fn apply_regex_filter(lines: &[String], regex: &Regex) -> Vec<String> {
+    lines
+        .iter()
+        .map(|line| regex.replace_all(line, "<IGNORED>").into_owned())
+        .collect()
 }
 
 #[cfg(test)]

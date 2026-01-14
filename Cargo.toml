@@ -15,11 +15,17 @@ clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
 thiserror = "1.0"
 
+# Logging
+log = "0.4"
+env_logger = "0.10"
+
 # High-performance processing
 similar = "2.4"           # Fast diff engine (Myers algorithm)
 rayon = "1.8"             # Parallel processing
 walkdir = "2.4"           # Efficient directory traversal
 blake3 = "1.5"            # Fast cryptographic hashing
+globset = "0.4"           # Fast glob pattern matching
+regex = "1.10"            # Regular expressions for text filtering
 
 # String similarity
 strsim = "0.10"           # Jaro-Winkler and other string metrics

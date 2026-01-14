@@ -25,9 +25,20 @@ pub fn compare_structured_files(
     let (headers1, records1) = parse_structured_file(&file1.path, delimiter1, &config.key_columns)?;
     let (headers2, records2) = parse_structured_file(&file2.path, delimiter2, &config.key_columns)?;
 
-    // Analyze columns
-    let columns1: HashSet<&str> = headers1.iter().map(|s| s.as_str()).collect();
-    let columns2: HashSet<&str> = headers2.iter().map(|s| s.as_str()).collect();
+    // Filter out ignored columns
+    let ignored_cols: HashSet<&str> = config.ignore_columns.iter().map(|s| s.as_str()).collect();
+
+    // Analyze columns (excluding ignored ones)
+    let columns1: HashSet<&str> = headers1
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|s| !ignored_cols.contains(s))
+        .collect();
+    let columns2: HashSet<&str> = headers2
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|s| !ignored_cols.contains(s))
+        .collect();
 
     let common_columns: Vec<String> = columns1
         .intersection(&columns2)
@@ -54,8 +65,13 @@ pub fn compare_structured_files(
     let mut field_mismatches: HashMap<String, Vec<FieldMismatch>> = HashMap::new();
 
     for key in &common_keys {
-        let row1 = records1.get(*key).unwrap();
-        let row2 = records2.get(*key).unwrap();
+        // Safety: key is guaranteed to exist in both maps since it comes from the intersection
+        let Some(row1) = records1.get(*key) else {
+            continue;
+        };
+        let Some(row2) = records2.get(*key) else {
+            continue;
+        };
 
         for col in &common_columns {
             // Skip key columns in mismatch analysis
@@ -226,11 +242,6 @@ fn values_equal(val1: &str, val2: &str, tolerance: f64) -> bool {
     }
 
     false
-}
-
-/// Generate mismatch artifact JSON for a comparison result
-pub fn generate_mismatch_artifact(result: &StructuredComparisonResult) -> String {
-    serde_json::to_string_pretty(result).unwrap_or_default()
 }
 
 #[cfg(test)]
