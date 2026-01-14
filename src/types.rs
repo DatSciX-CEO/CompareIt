@@ -209,6 +209,11 @@ pub struct CompareConfig {
     /// Output directory for patch files and mismatch artifacts
     pub output_dir: Option<PathBuf>,
 
+    /// Base directory for automatic results (JSONL, HTML, artifacts)
+    ///
+    /// Timestamped files are created within this directory.
+    pub results_base: PathBuf,
+
     /// Enable verbose output (show all results, diff snippets)
     pub verbose: bool,
 
@@ -244,6 +249,7 @@ impl Default for CompareConfig {
             output_jsonl: None,
             output_csv: None,
             output_dir: None,
+            results_base: PathBuf::from("results"),
             verbose: false,
             exclude_patterns: Vec::new(),
             ignore_columns: Vec::new(),

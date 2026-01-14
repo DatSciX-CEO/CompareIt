@@ -16,12 +16,14 @@ mod report;
 mod types;
 
 use anyhow::{Context, Result};
+use chrono::Local;
 use clap::{Parser, Subcommand};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Cell, Color, Table};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::compare_structured::compare_structured_files;
 use crate::compare_text::compare_text_files;
@@ -130,6 +132,10 @@ enum Commands {
         #[arg(long)]
         out_dir: Option<PathBuf>,
 
+        /// Base directory for results (contains timestamped JSONL, HTML, artifacts)
+        #[arg(short = 'B', long, default_value = "results")]
+        results_base: PathBuf,
+
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
@@ -180,6 +186,7 @@ fn main() -> Result<()> {
             out_jsonl,
             out_csv,
             out_dir,
+            results_base,
             verbose,
         } => {
             let config = CompareConfig {
@@ -201,6 +208,7 @@ fn main() -> Result<()> {
                 output_jsonl: out_jsonl,
                 output_csv: out_csv,
                 output_dir: out_dir,
+                results_base,
                 verbose,
                 exclude_patterns: exclude,
                 ignore_columns,
@@ -226,6 +234,10 @@ fn main() -> Result<()> {
 fn run_compare(path1: &PathBuf, path2: &PathBuf, config: &CompareConfig) -> Result<()> {
     println!("{}", style("CompareIt").cyan().bold());
     println!("{}", style("═".repeat(60)).dim());
+
+    // Set up automatic results directory using config.results_base
+    let results_dir = ensure_results_dir(&config.results_base)?;
+    let (auto_jsonl_path, auto_html_path, auto_artifacts_dir) = get_auto_export_paths(&results_dir);
 
     // Stage 1: Index files
     println!("\n{} Indexing files...", style("[1/4]").bold());
@@ -287,28 +299,46 @@ fn run_compare(path1: &PathBuf, path2: &PathBuf, config: &CompareConfig) -> Resu
         display_results_table(&results, config.verbose);
     }
 
-    // Export results
-    if config.output_jsonl.is_some() || config.output_csv.is_some() || config.output_dir.is_some() {
-        println!("\n{}", style("Exporting results...").dim());
-        export_all(
-            &results,
-            config.output_jsonl.as_deref(),
-            config.output_csv.as_deref(),
-            config.output_dir.as_deref(),
-        )?;
+    // Export results - always export to results folder automatically
+    println!("\n{}", style("Exports").cyan().bold());
+    println!("{}", style("─".repeat(60)).dim());
+    
+    // Show the results base directory
+    let canonical_results = results_dir.canonicalize().unwrap_or_else(|_| results_dir.clone());
+    println!(
+        "  {} {}",
+        style("Results Directory:").dim(),
+        style(canonical_results.display()).white().bold()
+    );
+    
+    // Determine which paths to use (user-specified or automatic)
+    let jsonl_path = config.output_jsonl.as_deref().unwrap_or(&auto_jsonl_path);
+    let artifacts_path = config.output_dir.as_deref().unwrap_or(&auto_artifacts_dir);
+    
+    // Export JSONL and artifacts
+    export_all(
+        &results,
+        Some(jsonl_path),
+        config.output_csv.as_deref(),
+        Some(artifacts_path),
+    )?;
 
-        if let Some(ref path) = config.output_jsonl {
-            println!("  JSONL: {}", path.display());
-        }
-        if let Some(ref path) = config.output_csv {
-            println!("  CSV: {}", path.display());
-        }
-        if let Some(ref path) = config.output_dir {
-            println!("  Artifacts: {}/", path.display());
-        }
+    println!("  {} {}", style("JSONL:").dim(), jsonl_path.display());
+    if let Some(ref path) = config.output_csv {
+        println!("  {} {}", style("CSV:").dim(), path.display());
     }
+    println!("  {} {}/", style("Artifacts:").dim(), artifacts_path.display());
+
+    // Always generate HTML report
+    let html_path = auto_html_path;
+    generate_html_report(&results, &summary, &html_path, Some(artifacts_path))?;
+    println!("  {} {}", style("HTML Report:").dim(), html_path.display());
 
     println!("\n{}", style("✓ Complete").green().bold());
+    println!(
+        "{}",
+        style(format!("  Open {} in your browser to view the detailed report", html_path.display())).dim()
+    );
     Ok(())
 }
 
@@ -467,36 +497,94 @@ fn display_summary_table(summary: &types::ComparisonSummary) {
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS);
 
+    // Header row for the comparison overview
+    table.set_header(vec![
+        Cell::new("Metric").fg(Color::Cyan),
+        Cell::new("Value").fg(Color::Cyan),
+        Cell::new("Status").fg(Color::Cyan),
+    ]);
+
+    // Pairs Compared
     table.add_row(vec![
         Cell::new("Pairs Compared"),
-        Cell::new(summary.pairs_compared),
+        Cell::new(summary.pairs_compared).fg(Color::White),
+        Cell::new(""),
     ]);
+
+    // Identical - green checkmark
+    let identical_status = if summary.identical_pairs == summary.pairs_compared && summary.pairs_compared > 0 {
+        "✓ All match!"
+    } else if summary.identical_pairs > 0 {
+        "✓"
+    } else {
+        ""
+    };
     table.add_row(vec![
         Cell::new("Identical"),
         Cell::new(summary.identical_pairs).fg(Color::Green),
+        Cell::new(identical_status).fg(Color::Green),
     ]);
+
+    // Different - yellow warning
+    let different_status = if summary.different_pairs > 0 {
+        "≠ Review needed"
+    } else {
+        ""
+    };
     table.add_row(vec![
         Cell::new("Different"),
         Cell::new(summary.different_pairs).fg(Color::Yellow),
+        Cell::new(different_status).fg(Color::Yellow),
     ]);
+
+    // Errors - red if any
+    let error_color = if summary.error_pairs > 0 { Color::Red } else { Color::White };
+    let error_status = if summary.error_pairs > 0 { "✗ Check logs" } else { "" };
     table.add_row(vec![
         Cell::new("Errors"),
-        Cell::new(summary.error_pairs).fg(if summary.error_pairs > 0 {
-            Color::Red
-        } else {
-            Color::White
-        }),
+        Cell::new(summary.error_pairs).fg(error_color),
+        Cell::new(error_status).fg(error_color),
     ]);
+
+    // Similarity scores with visual indicator
+    let avg_sim_pct = summary.average_similarity * 100.0;
+    let avg_color = if avg_sim_pct >= 90.0 {
+        Color::Green
+    } else if avg_sim_pct >= 50.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+    let avg_bar = create_similarity_bar(summary.average_similarity);
     table.add_row(vec![
         Cell::new("Avg Similarity"),
-        Cell::new(format!("{:.1}%", summary.average_similarity * 100.0)),
+        Cell::new(format!("{:.1}%", avg_sim_pct)).fg(avg_color),
+        Cell::new(avg_bar).fg(avg_color),
     ]);
+
+    let min_sim_pct = summary.min_similarity * 100.0;
+    let min_color = if min_sim_pct >= 90.0 {
+        Color::Green
+    } else if min_sim_pct >= 50.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+    let min_bar = create_similarity_bar(summary.min_similarity);
     table.add_row(vec![
         Cell::new("Min Similarity"),
-        Cell::new(format!("{:.1}%", summary.min_similarity * 100.0)),
+        Cell::new(format!("{:.1}%", min_sim_pct)).fg(min_color),
+        Cell::new(min_bar).fg(min_color),
     ]);
 
     println!("{table}");
+}
+
+/// Create a visual similarity bar
+fn create_similarity_bar(similarity: f64) -> String {
+    let filled = (similarity * 10.0).round() as usize;
+    let empty = 10 - filled;
+    format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
 }
 
 /// Display detailed results grouped by status
@@ -546,10 +634,11 @@ fn display_results_table(results: &[ComparisonResult], verbose: bool) {
         );
         display_detailed_table(&modified, verbose);
 
-        // Show diff snippets for high-similarity files in verbose mode
-        if verbose {
-            display_diff_snippets(&modified);
-        }
+        // Always show field-level mismatches for structured files (this is the key enhancement!)
+        display_field_mismatches(&modified, verbose);
+
+        // Show text file analysis (always show for text files with differences)
+        display_diff_snippets(&modified);
     }
 
     // Display Errors
@@ -664,45 +753,371 @@ fn display_detailed_table(results: &[&ComparisonResult], verbose: bool) {
     println!("{table}");
 }
 
-/// Display diff snippets for modified files with high similarity
+/// Display diff snippets for modified text files
 fn display_diff_snippets(results: &[&ComparisonResult]) {
-    let high_sim_results: Vec<&&ComparisonResult> = results
+    // Get all text results that have differences
+    let text_results: Vec<(&types::TextComparisonResult, &str, &str)> = results
         .iter()
-        .filter(|r| {
-            let sim = r.similarity_score();
-            sim >= 0.9 && sim < 1.0
+        .filter_map(|r| {
+            if let ComparisonResult::Text(t) = r {
+                if !t.identical {
+                    let (f1, f2) = r.file_paths();
+                    return Some((t, f1, f2));
+                }
+            }
+            None
         })
-        .take(3) // Show at most 3 diff snippets
+        .take(5)
         .collect();
 
-    if high_sim_results.is_empty() {
+    if text_results.is_empty() {
         return;
     }
 
-    println!("\n{}", style("Diff Snippets (High Similarity)").cyan().bold());
-    println!("{}", style("─".repeat(50)).dim());
+    println!("\n{}", style("Text File Analysis").cyan().bold());
+    println!("{}", style("═".repeat(60)).dim());
 
-    for result in high_sim_results {
-        if let ComparisonResult::Text(r) = result {
-            let (file1, _file2) = result.file_paths();
-            println!("\n{}", style(truncate_path(file1, 50)).bold());
+    for (result, file1, file2) in text_results {
+        println!(
+            "\n{} {}",
+            style("▶").cyan().bold(),
+            style(truncate_path(file1, 40)).bold()
+        );
+        println!(
+            "  {} {}",
+            style("vs").dim(),
+            style(truncate_path(file2, 40)).bold()
+        );
 
-            // Show first 5 lines of diff
-            let diff_lines: Vec<&str> = r.detailed_diff.lines().take(8).collect();
-            for line in diff_lines {
+        // Quick stats
+        println!();
+        let mut stats_table = Table::new();
+        stats_table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS);
+        stats_table.set_header(vec![
+            Cell::new("Metric").fg(Color::Cyan),
+            Cell::new("File 1").fg(Color::Cyan),
+            Cell::new("File 2").fg(Color::Cyan),
+        ]);
+        
+        stats_table.add_row(vec![
+            Cell::new("Total Lines"),
+            Cell::new(result.file1_line_count),
+            Cell::new(result.file2_line_count),
+        ]);
+        stats_table.add_row(vec![
+            Cell::new("Common Lines"),
+            Cell::new(result.common_lines),
+            Cell::new(result.common_lines),
+        ]);
+        if result.only_in_file1 > 0 || result.only_in_file2 > 0 {
+            stats_table.add_row(vec![
+                Cell::new("Unique Lines"),
+                Cell::new(result.only_in_file1).fg(Color::Red),
+                Cell::new(result.only_in_file2).fg(Color::Green),
+            ]);
+        }
+        println!("{stats_table}");
+
+        // Show diff preview if available
+        if !result.detailed_diff.is_empty() {
+            println!();
+            println!("  {}", style("Diff Preview").yellow().bold());
+            
+            let mut additions = 0;
+            let mut deletions = 0;
+            let mut shown_lines = 0;
+            let max_lines = 12;
+
+            for line in result.detailed_diff.lines() {
                 if line.starts_with('+') && !line.starts_with("+++") {
-                    println!("  {}", style(line).green());
+                    additions += 1;
+                    if shown_lines < max_lines {
+                        let display_line = if line.len() > 70 {
+                            format!("{}...", &line[..67])
+                        } else {
+                            line.to_string()
+                        };
+                        println!("    {}", style(display_line).green());
+                        shown_lines += 1;
+                    }
                 } else if line.starts_with('-') && !line.starts_with("---") {
-                    println!("  {}", style(line).red());
-                } else if !line.starts_with("@@") && !line.starts_with("---") && !line.starts_with("+++") {
-                    println!("  {}", style(line).dim());
+                    deletions += 1;
+                    if shown_lines < max_lines {
+                        let display_line = if line.len() > 70 {
+                            format!("{}...", &line[..67])
+                        } else {
+                            line.to_string()
+                        };
+                        println!("    {}", style(display_line).red());
+                        shown_lines += 1;
+                    }
+                } else if line.starts_with("@@") && shown_lines < max_lines {
+                    // Show hunk headers
+                    println!("    {}", style(line).cyan().dim());
+                    shown_lines += 1;
                 }
             }
 
-            if r.diff_truncated || r.detailed_diff.lines().count() > 8 {
-                println!("  {}", style("... (truncated)").dim());
+            // Summary
+            if result.diff_truncated || additions + deletions > max_lines {
+                println!(
+                    "    {} {} lines added, {} lines removed (showing first {})",
+                    style("ℹ").blue(),
+                    style(additions).green(),
+                    style(deletions).red(),
+                    shown_lines
+                );
             }
         }
+    }
+}
+
+/// Display field-level mismatches for structured (CSV/TSV) comparisons
+fn display_field_mismatches(results: &[&ComparisonResult], verbose: bool) {
+    // Filter to only structured results with mismatches
+    let structured_with_mismatches: Vec<&types::StructuredComparisonResult> = results
+        .iter()
+        .filter_map(|r| {
+            if let ComparisonResult::Structured(s) = r {
+                if !s.field_mismatches.is_empty() 
+                    || s.only_in_file1 > 0 
+                    || s.only_in_file2 > 0 
+                    || !s.columns_only_in_file1.is_empty()
+                    || !s.columns_only_in_file2.is_empty()
+                {
+                    return Some(s);
+                }
+            }
+            None
+        })
+        .collect();
+
+    if structured_with_mismatches.is_empty() {
+        return;
+    }
+
+    println!("\n{}", style("Structured Data Analysis (CSV/TSV)").cyan().bold());
+    println!("{}", style("═".repeat(60)).dim());
+
+    for result in structured_with_mismatches.iter().take(if verbose { 10 } else { 5 }) {
+        // Show file pair header with row counts
+        println!(
+            "\n{} {}",
+            style("▶").cyan().bold(),
+            style(truncate_path(&result.file1_path, 40)).bold()
+        );
+        println!(
+            "  {} {}",
+            style("vs").dim(),
+            style(truncate_path(&result.file2_path, 40)).bold()
+        );
+
+        // ─────────────────────────────────────────────────────────────
+        // SECTION 1: Quick Stats Box
+        // ─────────────────────────────────────────────────────────────
+        println!();
+        let mut stats_table = Table::new();
+        stats_table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS);
+        stats_table.set_header(vec![
+            Cell::new("Metric").fg(Color::Cyan),
+            Cell::new("File 1").fg(Color::Cyan),
+            Cell::new("File 2").fg(Color::Cyan),
+            Cell::new("Delta").fg(Color::Cyan),
+        ]);
+
+        // Row counts
+        let row_delta = result.file2_row_count as i64 - result.file1_row_count as i64;
+        let delta_str = if row_delta > 0 {
+            format!("+{}", row_delta)
+        } else {
+            row_delta.to_string()
+        };
+        let delta_color = if row_delta == 0 {
+            Color::White
+        } else if row_delta > 0 {
+            Color::Green
+        } else {
+            Color::Red
+        };
+
+        stats_table.add_row(vec![
+            Cell::new("Total Rows"),
+            Cell::new(result.file1_row_count),
+            Cell::new(result.file2_row_count),
+            Cell::new(&delta_str).fg(delta_color),
+        ]);
+
+        stats_table.add_row(vec![
+            Cell::new("Matched Rows"),
+            Cell::new(result.common_records),
+            Cell::new(result.common_records),
+            Cell::new("—"),
+        ]);
+
+        if result.only_in_file1 > 0 || result.only_in_file2 > 0 {
+            stats_table.add_row(vec![
+                Cell::new("Unmatched Rows"),
+                Cell::new(result.only_in_file1).fg(Color::Red),
+                Cell::new(result.only_in_file2).fg(Color::Green),
+                Cell::new(""),
+            ]);
+        }
+
+        // Column counts
+        let total_cols_1 = result.common_columns.len() + result.columns_only_in_file1.len();
+        let total_cols_2 = result.common_columns.len() + result.columns_only_in_file2.len();
+        stats_table.add_row(vec![
+            Cell::new("Total Columns"),
+            Cell::new(total_cols_1),
+            Cell::new(total_cols_2),
+            Cell::new(if total_cols_1 == total_cols_2 { "—" } else { "≠" }),
+        ]);
+
+        println!("{stats_table}");
+
+        // ─────────────────────────────────────────────────────────────
+        // SECTION 2: Schema Differences (if any)
+        // ─────────────────────────────────────────────────────────────
+        if !result.columns_only_in_file1.is_empty() || !result.columns_only_in_file2.is_empty() {
+            println!();
+            println!("  {}", style("Schema Differences").yellow().bold());
+            
+            if !result.columns_only_in_file1.is_empty() {
+                println!(
+                    "    {} {} (in File1 only)",
+                    style("−").red().bold(),
+                    style(result.columns_only_in_file1.join(", ")).red()
+                );
+            }
+            if !result.columns_only_in_file2.is_empty() {
+                println!(
+                    "    {} {} (in File2 only)",
+                    style("+").green().bold(),
+                    style(result.columns_only_in_file2.join(", ")).green()
+                );
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // SECTION 3: Column-wise Mismatch Summary
+        // ─────────────────────────────────────────────────────────────
+        if !result.field_mismatches.is_empty() {
+            println!();
+            println!("  {}", style("Column Mismatch Summary").yellow().bold());
+            
+            let mut col_summary_table = Table::new();
+            col_summary_table
+                .load_preset(UTF8_FULL)
+                .apply_modifier(UTF8_ROUND_CORNERS);
+            col_summary_table.set_header(vec![
+                Cell::new("Column").fg(Color::Cyan),
+                Cell::new("Mismatches").fg(Color::Cyan),
+                Cell::new("% of Matched").fg(Color::Cyan),
+            ]);
+
+            for col_mismatch in &result.field_mismatches {
+                let pct = if result.common_records > 0 {
+                    (col_mismatch.mismatch_count as f64 / result.common_records as f64) * 100.0
+                } else {
+                    0.0
+                };
+                
+                let pct_color = if pct > 50.0 {
+                    Color::Red
+                } else if pct > 10.0 {
+                    Color::Yellow
+                } else {
+                    Color::White
+                };
+
+                col_summary_table.add_row(vec![
+                    Cell::new(&col_mismatch.column_name),
+                    Cell::new(col_mismatch.mismatch_count).fg(Color::Yellow),
+                    Cell::new(format!("{:.1}%", pct)).fg(pct_color),
+                ]);
+            }
+
+            println!("{col_summary_table}");
+
+            // ─────────────────────────────────────────────────────────────
+            // SECTION 4: Sample Value Differences (most important!)
+            // ─────────────────────────────────────────────────────────────
+            println!();
+            println!("  {}", style("Sample Value Differences").yellow().bold());
+            
+            let mut value_table = Table::new();
+            value_table
+                .load_preset(UTF8_FULL)
+                .apply_modifier(UTF8_ROUND_CORNERS);
+            value_table.set_header(vec![
+                Cell::new("Column").fg(Color::Cyan),
+                Cell::new("Key").fg(Color::Cyan),
+                Cell::new("File 1 Value").fg(Color::Red),
+                Cell::new("File 2 Value").fg(Color::Green),
+            ]);
+
+            // Show sample mismatches - prioritize showing variety across columns
+            let samples_per_column = if verbose { 5 } else { 2 };
+            let max_samples = if verbose { 20 } else { 8 };
+            let mut shown = 0;
+
+            for col_mismatch in &result.field_mismatches {
+                if shown >= max_samples {
+                    break;
+                }
+                for sample in col_mismatch.sample_mismatches.iter().take(samples_per_column) {
+                    if shown >= max_samples {
+                        break;
+                    }
+                    value_table.add_row(vec![
+                        Cell::new(&col_mismatch.column_name),
+                        Cell::new(truncate_value(&sample.key, 18)),
+                        Cell::new(truncate_value(&sample.value1, 25)).fg(Color::Red),
+                        Cell::new(truncate_value(&sample.value2, 25)).fg(Color::Green),
+                    ]);
+                    shown += 1;
+                }
+            }
+
+            println!("{value_table}");
+
+            // Show how many more are available
+            if result.total_field_mismatches > shown {
+                println!(
+                    "  {} {} more differences in output files. Use {} for more samples.",
+                    style("ℹ").blue(),
+                    style(result.total_field_mismatches - shown).white().bold(),
+                    style("--verbose").cyan()
+                );
+            }
+        }
+    }
+
+    if structured_with_mismatches.len() > (if verbose { 10 } else { 5 }) {
+        println!(
+            "\n{} {} more file pairs with differences. Use {} to see all.",
+            style("ℹ").blue(),
+            structured_with_mismatches.len() - if verbose { 10 } else { 5 },
+            style("--verbose").cyan()
+        );
+    }
+}
+
+/// Truncate a value for display, preserving meaning
+fn truncate_value(value: &str, max_len: usize) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() <= max_len {
+        trimmed.to_string()
+    } else if max_len > 6 {
+        // Show beginning and end for context
+        let half = (max_len - 3) / 2;
+        format!("{}...{}", &trimmed[..half], &trimmed[trimmed.len() - half..])
+    } else {
+        format!("{}...", &trimmed[..max_len.saturating_sub(3)])
     }
 }
 
@@ -728,4 +1143,22 @@ fn truncate_path(path: &str, max_len: usize) -> String {
     } else {
         format!("...{}", &path[path.len() - max_len + 3..])
     }
+}
+
+/// Ensure the results directory exists at the specified path
+fn ensure_results_dir(base_path: &Path) -> Result<PathBuf> {
+    if !base_path.exists() {
+        fs::create_dir_all(base_path)
+            .context("Failed to create results directory")?;
+    }
+    Ok(base_path.to_path_buf())
+}
+
+/// Get full paths for automatic export files
+fn get_auto_export_paths(results_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+    let jsonl_path = results_dir.join(format!("compare_{}_results.jsonl", timestamp));
+    let html_path = results_dir.join(format!("compare_{}_report.html", timestamp));
+    let artifacts_dir = results_dir.join(format!("artifacts_{}", timestamp));
+    (jsonl_path, html_path, artifacts_dir)
 }
