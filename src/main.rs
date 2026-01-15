@@ -1,40 +1,28 @@
-//! CompareIt - High-performance file comparison tool
+//! CompareIt - High-performance file comparison tool (CLI)
 //!
-//! A standalone Rust executable for comparing files and folders with:
-//! - Text-based diff comparison (line-level)
-//! - Structured CSV/TSV comparison (key-based)
-//! - All-vs-all folder matching with fingerprint-based candidate pruning
-//! - Multiple export formats (JSONL, CSV, HTML)
+//! This is a thin CLI wrapper around the CompareIt library.
+//! All core logic is in lib.rs for sharing with the UI.
 
-mod compare_structured;
-mod compare_text;
-mod export;
-mod fingerprint;
-mod index;
-mod match_files;
-mod report;
-mod types;
-
-use anyhow::{Context, Result};
-use chrono::Local;
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Cell, Color, Table};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
-use rayon::prelude::*;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
-use crate::compare_structured::compare_structured_files;
-use crate::compare_text::compare_text_files;
-use crate::export::{calculate_summary, export_all};
-use crate::fingerprint::compute_fingerprints;
-use crate::index::index_path;
-use crate::match_files::generate_candidates;
-use crate::report::{generate_html_report, load_results_from_jsonl};
-use crate::types::{
-    CandidatePair, CompareConfig, CompareMode, ComparisonResult, FileEntry, FileType,
-    NormalizationOptions, PairingStrategy, SimilarityAlgorithm,
+// Import from our library crate
+use compare_it::{
+    ComparisonEngine, ProgressReporter,
+    export::calculate_summary,
+    report::{generate_html_report, load_results_from_jsonl},
+    types::{
+        self,
+        CompareConfig, CompareMode, ComparisonResult,
+        NormalizationOptions, PairingStrategy, SimilarityAlgorithm,
+        TextComparisonResult,
+    },
 };
 
 /// CompareIt - High-performance file comparison tool
@@ -230,62 +218,62 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Run the compare command
+/// CLI-specific progress reporter using indicatif
+struct CliProgressReporter {
+    bar: Mutex<Option<ProgressBar>>,
+    total: AtomicU64,
+}
+
+impl CliProgressReporter {
+    fn new() -> Self {
+        Self {
+            bar: Mutex::new(None),
+            total: AtomicU64::new(0),
+        }
+    }
+}
+
+impl ProgressReporter for CliProgressReporter {
+    fn start(&self, total: u64, message: &str) {
+        self.total.store(total, Ordering::SeqCst);
+        let pb = ProgressBar::new(total);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .expect("Invalid progress bar template")
+                .progress_chars("█▓░"),
+        );
+        pb.set_message(message.to_string());
+        *self.bar.lock().unwrap() = Some(pb);
+    }
+
+    fn inc(&self, delta: u64) {
+        if let Some(ref pb) = *self.bar.lock().unwrap() {
+            pb.inc(delta);
+        }
+    }
+
+    fn finish(&self, message: &str) {
+        if let Some(ref pb) = *self.bar.lock().unwrap() {
+            pb.finish_with_message(message.to_string());
+        }
+    }
+}
+
+/// Run the compare command using the shared library engine
 fn run_compare(path1: &PathBuf, path2: &PathBuf, config: &CompareConfig) -> Result<()> {
     println!("{}", style("CompareIt").cyan().bold());
     println!("{}", style("═".repeat(60)).dim());
 
-    // Set up automatic results directory using config.results_base
-    let results_dir = ensure_results_dir(&config.results_base)?;
-    let (auto_jsonl_path, auto_html_path, auto_artifacts_dir) = get_auto_export_paths(&results_dir);
+    // Create progress reporter for CLI
+    let progress = CliProgressReporter::new();
 
-    // Stage 1: Index files
-    println!("\n{} Indexing files...", style("[1/4]").bold());
-    let mut files1 = index_path(path1, &config.exclude_patterns).context("Failed to index path1")?;
-    let mut files2 = index_path(path2, &config.exclude_patterns).context("Failed to index path2")?;
+    // Use the shared comparison engine
+    let engine = ComparisonEngine::new(config).with_progress(&progress);
+    let results = engine.run(path1, path2)?;
 
-    println!(
-        "  Found {} files in path1, {} files in path2",
-        style(files1.len()).green(),
-        style(files2.len()).green()
-    );
-
-    // Stage 2: Compute fingerprints
-    println!("\n{} Computing fingerprints...", style("[2/4]").bold());
-    let pb = create_progress_bar((files1.len() + files2.len()) as u64);
-    
-    compute_fingerprints(&mut files1, &config.normalization);
-    pb.inc(files1.len() as u64);
-    
-    compute_fingerprints(&mut files2, &config.normalization);
-    pb.finish_with_message("Done");
-
-    // Stage 3: Generate candidate pairs
-    println!("\n{} Generating candidates...", style("[3/4]").bold());
-    let candidates = generate_candidates(&files1, &files2, config);
-    println!(
-        "  Generated {} candidate pairs (strategy: {:?})",
-        style(candidates.len()).green(),
-        config.pairing
-    );
-
-    // Stage 4: Exact comparison
-    println!("\n{} Comparing files...", style("[4/4]").bold());
-    let pb = create_progress_bar(candidates.len() as u64);
-
-    let results: Vec<ComparisonResult> = candidates
-        .par_iter()
-        .map(|pair| {
-            let result = compare_pair(pair, config);
-            pb.inc(1);
-            result
-        })
-        .collect();
-
-    pb.finish_with_message("Done");
-
-    // Calculate summary
-    let summary = calculate_summary(&results, files1.len(), files2.len());
+    // Calculate summary for display
+    let summary = calculate_summary(&results, 0, 0);
 
     // Display results table
     println!("\n{}", style("Results Summary").cyan().bold());
@@ -299,45 +287,21 @@ fn run_compare(path1: &PathBuf, path2: &PathBuf, config: &CompareConfig) -> Resu
         display_results_table(&results, config.verbose);
     }
 
-    // Export results - always export to results folder automatically
+    // Show export info
     println!("\n{}", style("Exports").cyan().bold());
     println!("{}", style("─".repeat(60)).dim());
     
-    // Show the results base directory
-    let canonical_results = results_dir.canonicalize().unwrap_or_else(|_| results_dir.clone());
+    let canonical_results = config.results_base.canonicalize().unwrap_or_else(|_| config.results_base.clone());
     println!(
         "  {} {}",
         style("Results Directory:").dim(),
         style(canonical_results.display()).white().bold()
     );
-    
-    // Determine which paths to use (user-specified or automatic)
-    let jsonl_path = config.output_jsonl.as_deref().unwrap_or(&auto_jsonl_path);
-    let artifacts_path = config.output_dir.as_deref().unwrap_or(&auto_artifacts_dir);
-    
-    // Export JSONL and artifacts
-    export_all(
-        &results,
-        Some(jsonl_path),
-        config.output_csv.as_deref(),
-        Some(artifacts_path),
-    )?;
-
-    println!("  {} {}", style("JSONL:").dim(), jsonl_path.display());
-    if let Some(ref path) = config.output_csv {
-        println!("  {} {}", style("CSV:").dim(), path.display());
-    }
-    println!("  {} {}/", style("Artifacts:").dim(), artifacts_path.display());
-
-    // Always generate HTML report
-    let html_path = auto_html_path;
-    generate_html_report(&results, &summary, &html_path, Some(artifacts_path))?;
-    println!("  {} {}", style("HTML Report:").dim(), html_path.display());
 
     println!("\n{}", style("✓ Complete").green().bold());
     println!(
         "{}",
-        style(format!("  Open {} in your browser to view the detailed report", html_path.display())).dim()
+        style("  Check the results directory for HTML report and artifacts").dim()
     );
     Ok(())
 }
@@ -362,132 +326,6 @@ fn run_report(input: &PathBuf, html: &PathBuf, artifacts: Option<&std::path::Pat
         html.display()
     );
     Ok(())
-}
-
-/// Compare a single candidate pair
-fn compare_pair(pair: &CandidatePair, config: &CompareConfig) -> ComparisonResult {
-    // Quick check for identical files
-    if pair.exact_hash_match {
-        return create_identical_result(&pair.file1, &pair.file2);
-    }
-
-    // Determine comparison mode
-    let mode = match config.mode {
-        CompareMode::Auto => auto_detect_mode(&pair.file1, &pair.file2),
-        CompareMode::Text => CompareMode::Text,
-        CompareMode::Structured => CompareMode::Structured,
-    };
-
-    match mode {
-        CompareMode::Text => {
-            match compare_text_files(&pair.file1, &pair.file2, config) {
-                Ok(result) => ComparisonResult::Text(result),
-                Err(e) => ComparisonResult::Error {
-                    file1_path: pair.file1.path.display().to_string(),
-                    file2_path: pair.file2.path.display().to_string(),
-                    error: e.to_string(),
-                },
-            }
-        }
-        CompareMode::Structured => {
-            match compare_structured_files(&pair.file1, &pair.file2, config) {
-                Ok(result) => ComparisonResult::Structured(result),
-                Err(e) => ComparisonResult::Error {
-                    file1_path: pair.file1.path.display().to_string(),
-                    file2_path: pair.file2.path.display().to_string(),
-                    error: e.to_string(),
-                },
-            }
-        }
-        CompareMode::Auto => {
-            // Fallback to text if auto-detection fails
-            match compare_text_files(&pair.file1, &pair.file2, config) {
-                Ok(result) => ComparisonResult::Text(result),
-                Err(e) => ComparisonResult::Error {
-                    file1_path: pair.file1.path.display().to_string(),
-                    file2_path: pair.file2.path.display().to_string(),
-                    error: e.to_string(),
-                },
-            }
-        }
-    }
-}
-
-/// Auto-detect comparison mode based on file types
-fn auto_detect_mode(file1: &FileEntry, file2: &FileEntry) -> CompareMode {
-    if file1.file_type.is_structured() && file2.file_type.is_structured() {
-        CompareMode::Structured
-    } else if file1.file_type == FileType::Binary || file2.file_type == FileType::Binary {
-        CompareMode::Text // Will fall through to hash-only
-    } else {
-        CompareMode::Text
-    }
-}
-
-/// Create a result for identical files
-fn create_identical_result(file1: &FileEntry, file2: &FileEntry) -> ComparisonResult {
-    let linked_id = format!(
-        "{}:{}",
-        &file1.content_hash[..16.min(file1.content_hash.len())],
-        &file2.content_hash[..16.min(file2.content_hash.len())]
-    );
-
-    if file1.file_type == FileType::Binary || file2.file_type == FileType::Binary {
-        ComparisonResult::HashOnly {
-            linked_id,
-            file1_path: file1.path.display().to_string(),
-            file2_path: file2.path.display().to_string(),
-            file1_size: file1.size,
-            file2_size: file2.size,
-            identical: true,
-        }
-    } else if file1.file_type.is_structured() && file2.file_type.is_structured() {
-        ComparisonResult::Structured(types::StructuredComparisonResult {
-            linked_id,
-            file1_path: file1.path.display().to_string(),
-            file2_path: file2.path.display().to_string(),
-            file1_row_count: file1.line_count,
-            file2_row_count: file2.line_count,
-            common_records: file1.line_count,
-            only_in_file1: 0,
-            only_in_file2: 0,
-            similarity_score: 1.0,
-            field_mismatches: vec![],
-            total_field_mismatches: 0,
-            columns_only_in_file1: vec![],
-            columns_only_in_file2: vec![],
-            common_columns: file1.columns.clone().unwrap_or_default(),
-            identical: true,
-        })
-    } else {
-        ComparisonResult::Text(types::TextComparisonResult {
-            linked_id,
-            file1_path: file1.path.display().to_string(),
-            file2_path: file2.path.display().to_string(),
-            file1_line_count: file1.line_count,
-            file2_line_count: file2.line_count,
-            common_lines: file1.line_count,
-            only_in_file1: 0,
-            only_in_file2: 0,
-            similarity_score: 1.0,
-            different_positions: String::new(),
-            detailed_diff: String::new(),
-            diff_truncated: false,
-            identical: true,
-        })
-    }
-}
-
-/// Create a progress bar
-fn create_progress_bar(total: u64) -> ProgressBar {
-    let pb = ProgressBar::new(total);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-            .expect("Invalid progress bar template - this is a bug in CompareIt")
-            .progress_chars("█▓░"),
-    );
-    pb
 }
 
 /// Display summary statistics table
@@ -756,7 +594,7 @@ fn display_detailed_table(results: &[&ComparisonResult], verbose: bool) {
 /// Display diff snippets for modified text files
 fn display_diff_snippets(results: &[&ComparisonResult]) {
     // Get all text results that have differences
-    let text_results: Vec<(&types::TextComparisonResult, &str, &str)> = results
+    let text_results: Vec<(&TextComparisonResult, &str, &str)> = results
         .iter()
         .filter_map(|r| {
             if let ComparisonResult::Text(t) = r {
@@ -876,8 +714,10 @@ fn display_diff_snippets(results: &[&ComparisonResult]) {
 
 /// Display field-level mismatches for structured (CSV/TSV) comparisons
 fn display_field_mismatches(results: &[&ComparisonResult], verbose: bool) {
+    use compare_it::types::StructuredComparisonResult;
+    
     // Filter to only structured results with mismatches
-    let structured_with_mismatches: Vec<&types::StructuredComparisonResult> = results
+    let structured_with_mismatches: Vec<&StructuredComparisonResult> = results
         .iter()
         .filter_map(|r| {
             if let ComparisonResult::Structured(s) = r {
@@ -1143,22 +983,4 @@ fn truncate_path(path: &str, max_len: usize) -> String {
     } else {
         format!("...{}", &path[path.len() - max_len + 3..])
     }
-}
-
-/// Ensure the results directory exists at the specified path
-fn ensure_results_dir(base_path: &Path) -> Result<PathBuf> {
-    if !base_path.exists() {
-        fs::create_dir_all(base_path)
-            .context("Failed to create results directory")?;
-    }
-    Ok(base_path.to_path_buf())
-}
-
-/// Get full paths for automatic export files
-fn get_auto_export_paths(results_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
-    let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-    let jsonl_path = results_dir.join(format!("compare_{}_results.jsonl", timestamp));
-    let html_path = results_dir.join(format!("compare_{}_report.html", timestamp));
-    let artifacts_dir = results_dir.join(format!("artifacts_{}", timestamp));
-    (jsonl_path, html_path, artifacts_dir)
 }

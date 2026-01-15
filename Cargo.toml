@@ -5,6 +5,10 @@ edition = "2021"
 description = "High-performance file comparison tool with text and structured modes"
 authors = ["CompareIt Team"]
 
+[lib]
+name = "compare_it"
+path = "src/lib.rs"
+
 [[bin]]
 name = "CompareIt"
 path = "src/main.rs"

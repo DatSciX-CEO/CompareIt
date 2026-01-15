@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities for CompareIt","local":true,"windows":["main"],"permissions":["core:default","dialog:default","dialog:allow-open","fs:default","fs:allow-read-dir","fs:allow-read-file"]}}

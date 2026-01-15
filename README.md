@@ -3,171 +3,228 @@
 <div align="center">
 
 ![Rust](https://img.shields.io/badge/built_with-Rust-dca282.svg?style=flat-square&logo=rust)
+![Tauri](https://img.shields.io/badge/UI-Tauri_v2-blue?style=flat-square&logo=tauri)
+![React](https://img.shields.io/badge/frontend-React-61dafb?style=flat-square&logo=react)
 ![Performance](https://img.shields.io/badge/performance-blazing-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.0.0-blueviolet?style=flat-square)
 
-**The Next-Generation File Intelligence & Comparison Engine**
+### The Next-Generation File Intelligence & Comparison Engine
 
-[Features](#-key-capabilities) • [Architecture](#-system-architecture) • [Installation](#-installation) • [Usage](#-scenarios--usage) • [Reporting](#-intelligent-reporting)
+[Desktop App](#desktop-experience) • [CLI Power](#cli-power-user) • [Getting Started](#getting-started) • [Installation](#installation) • [Architecture](#system-architecture)
 
 </div>
 
 ---
 
-**CompareIt** redefines how engineers verify data and code. It is not just a diff tool; it is an **industrial-grade comparison engine** designed for the modern stack. Built in Rust for extreme performance, it moves beyond simple line-by-line checks to understand the *structure* of your data and the *context* of your file systems.
+**CompareIt** redefines how engineers verify data and code. It is a dual-interface **industrial-grade comparison engine**—available as both a high-performance **CLI tool** and a modern **Desktop Application**. Built in Rust, it moves beyond simple line-by-line checks to understand the *structure* of your data and the *context* of your file systems.
 
 Whether you are auditing massive CSV datasets, verifying migration integrity across complex directory trees, or simply checking code changes, CompareIt delivers **automated, deep insights** in seconds.
 
 ---
 
-## 💎 Key Capabilities
+## 🖥️ Desktop Experience
 
-| Feature | Description |
-| :--- | :--- |
-| **🚀 Extreme Performance** | Powered by **Rust** and `Rayon`, CompareIt saturates multi-core CPUs to process gigabytes of data in seconds. Memory-safe and crash-resistant. |
-| **🧠 Structural Intelligence** | Smarter than `diff`. It parses **CSV/TSV** schemas dynamically, matching records by unique keys (ID, Email) and ignoring row order. |
-| **🔍 Smart Matching** | Uses **Simhash** & **Blake3** fingerprinting to automatically pair renamed or moved files across directories. No manual mapping required. |
-| **📊 Automated Reporting** | Generates a complete artifact suite: **Interactive HTML Dashboard**, **JSONL** machine-readable logs, and beautiful **CLI summaries**. |
-| **🎛️ Data Agnostic** | Works on everything. Source code, configuration files, binary assets, and structured financial/scientific data. |
+The CompareIt Desktop App (built with Tauri & React) provides a powerful, local-first interface for interactive data auditing.
+
+### Interface & Controls
+
+*   **Path Selection**: Large dedicated drop-zones for "Source (Path A)" and "Target (Path B)" with native folder selection dialogs.
+*   **Engine Control Panel**: Collapsible settings to fine-tune the comparison:
+    *   **Comparison Mode**: Toggle between `Auto-detect`, `Text (Line-by-line)`, or `Structured (CSV/TSV)`.
+    *   **Pairing Strategy**: Choose `Smart Match (All-vs-All)`, `Same Path`, or `Same Name`.
+    *   **Data Fine-tuning**: dedicated inputs for `Numeric Tolerance`, `Key Columns (CSV)`, and `Exclude Patterns`.
+    *   **Normalization**: Quick-toggles for `Ignore Whitespace`, `Ignore Case`, and `Skip Empty Lines`.
+
+### Real-time Visualization
+
+*   **Live Pipeline Tracking**: A real-time progress bar with stage-by-stage updates (Indexing ➔ Hashing ➔ Matching ➔ Diffing).
+*   **KPI Summary Dashboard**: Instant overview of Pairs Compared, Identical vs. Different counts, and Average Similarity scores.
+*   **Interactive Result Table**: Sortable rows with visual similarity bars and status badges.
+*   **Deep-Dive Detail View**:
+    *   **Text Analysis**: Interactive split-view diff preview with syntax highlighting for additions and deletions.
+    *   **Structured Audit**: Table of field mismatches showing exact keys, old values, and new values for every discrepancy.
 
 ---
 
-## 🔄 System Architecture
+## ⌨️ CLI Power User
 
-CompareIt employs a sophisticated four-stage pipeline to transform raw filesystem data into actionable intelligence.
+For automated workflows, CI/CD, and server-side processing, the CompareIt CLI remains the high-performance choice.
 
-```mermaid
-graph TD
-    CLI([User CLI Command]) --> Config[Configuration Parsing]
-    Config --> Results[Results Dir Initialization]
-    
-    subgraph Engine [The CompareIt Core]
-        Results --> Index[1. Indexing & Glob Filtering]
-        Index --> Fingerprint[2. Blake3 & Simhash Fingerprinting]
-        Fingerprint --> Match[3. Smart Candidate Generation]
-        Match --> Exact[4. Parallel Exact Comparison]
-    end
-    
-    subgraph Output [Insight Delivery]
-        Exact --> Summary[Terminal: Executive Summary]
-        Exact --> Detailed[Terminal: Field-Level Audit]
-        Exact --> JSONL[Export: Machine-Readable JSONL]
-        Exact --> HTML[Report: Interactive HTML Dashboard]
-    end
-    
-    Summary --> Success([Complete])
-    HTML --> Success
+### Main Commands
+
+*   **`compare <path1> <path2>`**: Runs the full comparison pipeline.
+*   **`report --input <jsonl> --html <output>`**: Generates a self-contained interactive HTML dashboard from raw JSONL results.
+
+### CLI Flags & Arguments
+
+| Flag | Description | Default |
+| :--- | :--- | :--- |
+| `-m, --mode` | Comparison mode: `auto`, `text`, or `structured`. | `auto` |
+| `--pairing` | Folder pairing strategy: `same-path`, `same-name`, `all-vs-all`. | `all-vs-all` |
+| `-k, --key` | Comma-separated column names to use as primary keys for CSV matching. | `Column 0` |
+| `--numeric-tol` | Tolerance for floating-point equality (e.g., `0.001`). | `0.0001` |
+| `--exclude` | Glob patterns for files/folders to ignore (e.g., `*.tmp,node_modules`). | `None` |
+| `--ignore-regex` | Regex pattern for content to ignore in text comparison. | `None` |
+| `--ignore-all-ws` | Ignore all whitespace differences. | `false` |
+| `--ignore-case` | Perform case-insensitive comparison. | `false` |
+| `-B, --results-base` | Base directory for automatic results. | `./results` |
+| `-v, --verbose` | Enable verbose output (show detailed diffs in terminal). | `false` |
+
+### Command Examples
+
+```bash
+# Basic folder comparison with smart matching
+CompareIt compare ./folder_v1 ./folder_v2
+
+# Deep CSV audit with specific business keys and numeric tolerance
+CompareIt compare ./data_a.csv ./data_b.csv --key "customer_id,transaction_id" --numeric-tol 0.01
+
+# Filtered code comparison ignoring comments
+CompareIt compare ./src_old ./src_new --ignore-regex "//.*" --ignore-all-ws
+
+# Generate a standalone HTML report from a previous run
+CompareIt report --input results/last_run.jsonl --html my_report.html
 ```
+
+---
+
+## 🚀 Getting Started
+
+Follow these steps to launch CompareIt for the first time.
+
+### Prerequisites
+
+*   **Rust**: [Install Rust](https://www.rust-lang.org/tools/install) (latest stable recommended).
+*   **Node.js & npm**: (For Desktop UI only) [Install Node.js](https://nodejs.org/).
+*   **OS Dependencies**: Tauri requires certain system libraries (e.g., `build-essential`, `libwebkit2gtk` on Linux, or C++ build tools on Windows).
+
+### Starting the Desktop UI
+
+1.  **Navigate to the UI directory**:
+    ```bash
+    cd ui
+    ```
+2.  **Install dependencies**:
+    ```bash
+    npm install
+    ```
+3.  **Launch the App in Development Mode**:
+    ```bash
+    npm run tauri dev
+    ```
+
+### Starting the CLI
+
+You can run the CLI directly using cargo:
+
+```bash
+# Basic file comparison
+cargo run -- compare ./file1.txt ./file2.txt
+
+# Folder comparison with verbose output
+cargo run -- compare ./dir1 ./dir2 --verbose
+```
+*Note: The `--` separates cargo arguments from CompareIt arguments.*
 
 ---
 
 ## 🛠️ Installation
 
-Get started in seconds. CompareIt is a single, static binary with no runtime dependencies.
+### Build for Production
 
-### ⚡ Quick Start
+To create a standalone executable for your machine:
 
-**Windows (PowerShell)**
-```powershell
-# Prerequisites: Ensure Rust is installed
-winget install Rustlang.Rustup
+#### Desktop App
 
-# Install CompareIt
+```bash
+cd ui
+npm run tauri build
+```
+*Binaries will be located in `src-tauri/target/release/bundle/` (e.g., `.msi` on Windows, `.app` or `.dmg` on macOS).*
+
+#### CLI Tool
+
+```bash
 cargo install --path .
 ```
+*This compiles the binary in release mode and adds `CompareIt` to your system's PATH.*
 
-**macOS / Linux**
-```bash
-# Prerequisites: Ensure Rust is installed
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+---
 
-# Install CompareIt
-cargo install --path .
+## 🔄 System Architecture
+
+CompareIt is architected as a shared library (`compare_it`) consumed by both the Tauri backend and the CLI wrapper.
+
+```mermaid
+graph TD
+    CLI([CompareIt CLI]) --> Engine[Core Library Engine]
+    UI([CompareIt Desktop]) --> Bridge[Tauri Bridge]
+    Bridge --> Engine
+    
+    subgraph Engine [The Comparison Pipeline]
+        Engine --> Index[1. Indexing & Glob Filtering]
+        Index --> Fingerprint[2. Blake3 & Simhash Hashing]
+        Fingerprint --> Match[3. Smart Candidate Selection]
+        Match --> Exact[4. Parallel Exact Comparison]
+    end
+    
+    subgraph Output [Actionable Insights]
+        Exact --> Dashboard[Interactive HTML Report]
+        Exact --> Artifacts[Patches & Mismatch JSONs]
+        Exact --> Live[Real-time UI / CLI Stream]
+    end
 ```
 
 ---
 
-## 📖 Scenarios & Usage
+## 🧠 The CompareIt Engine
 
-CompareIt adapts to your role. Whether you are a Data Engineer, DevOps Specialist, or Developer.
+### 1. Fingerprinting (Blake3 & Simhash)
 
-### 1️⃣ The Data Engineer (Structural Audit)
-*Problem:* You have two 500MB CSV files. Row order has changed, and floating-point numbers have tiny drift. `diff` is useless.
+*   **Blake3**: High-speed cryptographic hashing for identifying 100% identical files instantly.
+*   **Simhash**: Locality-sensitive hashing that allows the engine to find "moved or renamed" files by measuring content similarity in O(1) time.
 
-*Solution:* Compare by business key (`id`) with numeric tolerance.
-```bash
-CompareIt compare ./export_v1.csv ./export_v2.csv \
-    --key "customer_id" \
-    --numeric-tol 0.001 \
-    --ignore-columns "last_updated_at"
-```
+### 2. Structural Intelligence (CSV/TSV)
 
-### 2️⃣ The DevOps Engineer (Migration Verification)
-*Problem:* You moved a terabyte of config files to a new server structure. Files were renamed and reorganized.
+*   **Record Alignment**: Matches rows based on unique business keys, making the comparison immune to row order changes.
+*   **Field-Level Auditing**: Performs precision-aware comparisons for numeric data and character-level similarity for text fields.
+*   **Schema Detection**: Automatically identifies and reports missing or added columns across files.
 
-*Solution:* Use **All-vs-All** pairing to find moved files automatically.
-```bash
-CompareIt compare ./server_old ./server_new \
-    --pairing all-vs-all \
-    --results-base ./migration_audit
-```
+### 3. Parallel Execution (Rayon)
 
-### 3️⃣ The Developer (Code Review)
-*Problem:* You need a quick summary of what changed in a release, ignoring whitespace and comments.
-
-*Solution:* Text comparison with normalization.
-```bash
-CompareIt compare ./src_v1 ./src_v2 \
-    --ignore-all-ws \
-    --ignore-regex "//.*"
-```
+*   Utilizes a work-stealing scheduler to saturate all CPU cores, processing millions of records or thousands of files with sub-second latency.
 
 ---
 
-## ⚙️ Advanced Configuration
+## 📊 Artifacts & Exports
 
-Fine-tune the engine to your exact needs.
+CompareIt believes in **Persistent Observability**. Every run generates a timestamped results directory:
 
-| Argument | Description | Default |
-| :--- | :--- | :--- |
-| `path1`, `path2` | The two file system paths (files or directories) to compare. | *Required* |
-| `-B`, `--results-base` | Custom location for report artifacts. | `./results` |
-| `-m`, `--mode` | Force algorithm: `text`, `structured`, or `auto` detect. | `auto` |
-| `-k`, `--key` | Columns to use as primary keys for CSV matching. | `Column 0` |
-| `--pairing` | Strategy for folder matching: `same-path`, `same-name`, `all-vs-all`. | `all-vs-all` |
-| `--numeric-tol` | Tolerance for floating point equality (e.g., `0.001`). | `0.0001` |
-| `--exclude` | Glob patterns to ignore (e.g., `*.tmp`, `node_modules`). | `None` |
-| `-v`, `--verbose` | Output detailed diff snippets and value samples to CLI. | `false` |
+*   **`report.html`**: The primary exploration tool—a searchable, interactive dashboard.
+*   **`results.jsonl`**: Machine-readable stream of every single comparison result.
+*   **`artifacts/mismatches/`**: Detailed JSON logs of every structured data field that failed verification.
+*   **`artifacts/patches/`**: Standard unified diff files compatible with `patch` or `git`.
 
 ---
 
-## 📊 Intelligent Reporting
+## ❓ FAQ
 
-CompareIt believes in **Zero-Config Observability**. Every execution automatically produces:
+### How do I use the library in my own project?
 
-1.  **HTML Dashboard**: A rich, interactive report file (`report.html`). Search, filter, and view side-by-side diffs in your browser.
-2.  **Executive Summary**: A concise CLI table highlighting pass/fail rates and similarity scores.
-3.  **JSONL Feed**: A streaming log (`results.jsonl`) ideal for piping into ELK stacks, Splunk, or custom ETL pipelines.
-4.  **Artifacts**: Physical `patch` files and `mismatch` JSON extracts for detailed debugging.
+CompareIt is a standard Rust crate. Add it to your `Cargo.toml` and use the `ComparisonEngine` struct to run comparisons programmatically with custom `ProgressReporter` implementations.
 
----
+### Does it support binary files?
 
-## 📈 Benchmarks
+Yes, it performs a high-speed `Blake3` hash comparison for binary assets and reports them as either identical or different.
 
-| Dataset Size | Pairs | Operation | Time |
-| :--- | :--- | :--- | :--- |
-| **Small** | 1,000 | Code Diff | **< 0.5s** |
-| **Medium** | 10,000 | Mixed Content | **< 3.0s** |
-| **Large** | 100,000 | Structured Audit | **< 25.0s** |
-| **Throughput** | - | CSV Records | **~15k rows/sec** |
+### Can it handle files larger than RAM?
 
-*Benchmarks run on standard 8-core workstation.*
+Yes. CompareIt uses streaming readers for CSV/TSV data and memory-efficient indexing to process multi-gigabyte files without crashing.
 
 ---
 
 <div align="center">
-    
+
 *Built with precision by the CompareIt Engineering Team.*
 
 [Contribute](DEVELOPMENT.md) • [Report Bug](https://github.com/your-org/CompareIt/issues)
