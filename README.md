@@ -100,17 +100,17 @@ Follow these steps to launch CompareIt for the first time.
 
 ### Starting the Desktop UI
 
-1.  **Navigate to the UI directory**:
-    ```bash
-    cd ui
-    ```
-2.  **Install dependencies**:
+1.  **Install root dependencies** (from the project root):
     ```bash
     npm install
     ```
+2.  **Install UI dependencies**:
+    ```bash
+    npm run setup
+    ```
 3.  **Launch the App in Development Mode**:
     ```bash
-    npm run tauri dev
+    npm run dev
     ```
 
 ### Starting the CLI
@@ -137,8 +137,9 @@ To create a standalone executable for your machine:
 #### Desktop App
 
 ```bash
-cd ui
-npm run tauri build
+npm install
+npm run setup
+npm run build
 ```
 *Binaries will be located in `src-tauri/target/release/bundle/` (e.g., `.msi` on Windows, `.app` or `.dmg` on macOS).*
 
