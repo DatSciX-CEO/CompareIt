@@ -226,8 +226,16 @@ fn encode_ranges(positions: &[usize]) -> String {
 }
 
 /// Compile a regex pattern for line filtering, logging a warning if invalid
+///
+/// Uses RegexBuilder with size limits to prevent ReDoS attacks.
 fn compile_ignore_regex(pattern: &str) -> Option<Regex> {
-    match Regex::new(pattern) {
+    use regex::RegexBuilder;
+    
+    match RegexBuilder::new(pattern)
+        .size_limit(1_000_000)      // 1MB compiled size limit
+        .dfa_size_limit(1_000_000)  // 1MB DFA size limit to prevent explosion
+        .build()
+    {
         Ok(re) => Some(re),
         Err(e) => {
             warn!("Invalid ignore_regex pattern '{}': {}", pattern, e);

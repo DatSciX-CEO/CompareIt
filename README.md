@@ -228,6 +228,4 @@ Yes. CompareIt uses streaming readers for CSV/TSV data and memory-efficient inde
 
 *Built with precision by the CompareIt Engineering Team.*
 
-[Contribute](DEVELOPMENT.md) • [Report Bug](https://github.com/your-org/CompareIt/issues)
-
 </div>

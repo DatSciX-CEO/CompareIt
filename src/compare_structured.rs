@@ -113,10 +113,11 @@ pub fn compare_structured_files(
 
     let total_field_mismatches: usize = column_mismatches.iter().map(|c| c.mismatch_count).sum();
 
-    // Calculate similarity score
-    let total_records = keys1.len() + keys2.len() - common_keys.len();
-    let similarity_score = if total_records > 0 {
-        common_keys.len() as f64 / total_records as f64
+    // Calculate similarity score using Jaccard-style formula:
+    // similarity = |intersection| / |union| = common / (set1 + set2 - common)
+    let total_unique = keys1.len() + keys2.len() - common_keys.len();
+    let similarity_score = if total_unique > 0 {
+        common_keys.len() as f64 / total_unique as f64
     } else {
         1.0
     };

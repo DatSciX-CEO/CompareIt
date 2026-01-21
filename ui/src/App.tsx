@@ -1,7 +1,63 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+
+// Error Boundary to catch rendering errors and prevent white screen crashes
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+      return (
+        <div className="p-4 bg-rose-900/20 border border-rose-800 rounded-lg m-4">
+          <h3 className="text-rose-400 font-semibold mb-2">Something went wrong</h3>
+          <p className="text-rose-300 text-sm mb-4">
+            An error occurred while rendering this section. 
+          </p>
+          <details className="text-xs text-slate-400">
+            <summary className="cursor-pointer hover:text-slate-300">Error details</summary>
+            <pre className="mt-2 p-2 bg-slate-900 rounded overflow-auto">
+              {this.state.error?.message || "Unknown error"}
+            </pre>
+          </details>
+          <button
+            onClick={() => this.setState({ hasError: false, error: null })}
+            className="mt-4 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm text-slate-200"
+          >
+            Try Again
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 // Types matching Rust structs
 interface ProgressEvent {
@@ -354,9 +410,12 @@ function App() {
                   <div>
                     <label className="text-xs text-slate-400 mb-1.5 block">Numeric Tolerance</label>
                     <input
-                      type="text"
+                      type="number"
                       value={numericTolerance}
                       onChange={(e) => setNumericTolerance(e.target.value)}
+                      min="0"
+                      max="1"
+                      step="0.0001"
                       className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-slate-200 font-mono"
                       placeholder="0.0001"
                     />
@@ -369,6 +428,7 @@ function App() {
                       type="text"
                       value={keyColumns}
                       onChange={(e) => setKeyColumns(e.target.value)}
+                      maxLength={500}
                       className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-slate-200"
                       placeholder="id, email"
                     />
@@ -381,6 +441,7 @@ function App() {
                       type="text"
                       value={excludePatterns}
                       onChange={(e) => setExcludePatterns(e.target.value)}
+                      maxLength={1000}
                       className="w-full bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-slate-200"
                       placeholder="*.tmp, node_modules"
                     />
@@ -475,6 +536,7 @@ function App() {
 
           {/* Results */}
           {response && response.success && response.summary && (
+            <ErrorBoundary>
             <div className="space-y-6">
               {/* Summary Cards */}
               <div className="grid grid-cols-5 gap-4">
@@ -681,6 +743,7 @@ function App() {
                 </div>
               )}
             </div>
+            </ErrorBoundary>
           )}
         </div>
       </main>

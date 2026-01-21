@@ -15,13 +15,13 @@ path = "src/main.rs"
 
 [dependencies]
 # CLI and error handling
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 thiserror = "1.0"
 
 # Logging
 log = "0.4"
-env_logger = "0.10"
+env_logger = "0.11"
 
 # High-performance processing
 similar = "2.4"           # Fast diff engine (Myers algorithm)

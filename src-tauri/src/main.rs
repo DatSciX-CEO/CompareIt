@@ -174,10 +174,10 @@ fn ui_config_to_compare_config(ui_config: &UiCompareConfig) -> CompareConfig {
     CompareConfig {
         mode,
         pairing,
-        top_k: ui_config.top_k.unwrap_or(3),
+        top_k: ui_config.top_k.unwrap_or(3).min(100), // Clamp top_k to reasonable max
         max_pairs: None,
         key_columns: ui_config.key_columns.clone().unwrap_or_default(),
-        numeric_tolerance: ui_config.numeric_tolerance.unwrap_or(0.0001),
+        numeric_tolerance: validate_numeric_tolerance(ui_config.numeric_tolerance),
         normalization: NormalizationOptions {
             ignore_eol: ui_config.ignore_eol.unwrap_or(false),
             ignore_trailing_ws: ui_config.ignore_trailing_ws.unwrap_or(false),
@@ -194,8 +194,103 @@ fn ui_config_to_compare_config(ui_config: &UiCompareConfig) -> CompareConfig {
         verbose: false,
         exclude_patterns: ui_config.exclude_patterns.clone().unwrap_or_default(),
         ignore_columns: ui_config.ignore_columns.clone().unwrap_or_default(),
-        ignore_regex: ui_config.ignore_regex.clone(),
+        ignore_regex: validate_regex_pattern(ui_config.ignore_regex.clone()),
     }
+}
+
+/// Maximum allowed path length to prevent buffer-related issues
+const MAX_PATH_LENGTH: usize = 4096;
+
+/// Maximum allowed regex pattern length to prevent ReDoS via long patterns
+const MAX_REGEX_LENGTH: usize = 1000;
+
+/// Validate and canonicalize a path to prevent path traversal attacks
+///
+/// Security measures:
+/// 1. Path length limit to prevent buffer issues
+/// 2. Canonicalization to resolve symlinks and `..` components
+/// 3. Absolute path enforcement
+/// 4. Blacklist for sensitive system directories
+fn validate_path(path_str: &str) -> Result<PathBuf, String> {
+    // Check path length to prevent buffer-related issues
+    if path_str.len() > MAX_PATH_LENGTH {
+        return Err(format!("Path too long (max {} characters)", MAX_PATH_LENGTH));
+    }
+    
+    // Check for empty path
+    if path_str.trim().is_empty() {
+        return Err("Path cannot be empty".to_string());
+    }
+    
+    let path = PathBuf::from(path_str);
+    
+    // Check if path exists
+    if !path.exists() {
+        return Err(format!("Path does not exist: {}", path_str));
+    }
+    
+    // Canonicalize to resolve symlinks and relative components (../, ./)
+    // This is the key security measure - it resolves all `..` and `.` components
+    // and follows symlinks to get the actual absolute path
+    let canonical = path.canonicalize()
+        .map_err(|e| format!("Failed to resolve path '{}': {}", path_str, e))?;
+    
+    // Ensure the path is absolute after canonicalization
+    if !canonical.is_absolute() {
+        return Err(format!("Path must be absolute: {}", path_str));
+    }
+    
+    // Block access to common sensitive directories (basic protection)
+    let path_str_lower = canonical.to_string_lossy().to_lowercase();
+    #[cfg(windows)]
+    {
+        if path_str_lower.contains("\\windows\\system32")
+            || path_str_lower.contains("\\programdata")
+            || path_str_lower.contains("\\appdata\\local\\microsoft")
+            || path_str_lower.ends_with("\\sam")
+            || path_str_lower.ends_with("\\security")
+            || path_str_lower.ends_with("\\system")
+        {
+            return Err("Access to system directories is not allowed".to_string());
+        }
+    }
+    #[cfg(unix)]
+    {
+        if path_str_lower.starts_with("/etc")
+            || path_str_lower.starts_with("/var")
+            || path_str_lower.starts_with("/root")
+            || path_str_lower.starts_with("/proc")
+            || path_str_lower.starts_with("/sys")
+            || path_str_lower.starts_with("/dev")
+        {
+            return Err("Access to system directories is not allowed".to_string());
+        }
+    }
+    
+    Ok(canonical)
+}
+
+/// Validate numeric tolerance value
+fn validate_numeric_tolerance(tolerance: Option<f64>) -> f64 {
+    match tolerance {
+        Some(t) if t.is_finite() && t >= 0.0 && t <= 1.0 => t,
+        Some(t) if t.is_finite() && t > 1.0 => 1.0, // Clamp to max
+        Some(t) if t.is_finite() && t < 0.0 => 0.0, // Clamp to min
+        _ => 0.0001, // Default for NaN, Infinity, or None
+    }
+}
+
+/// Validate and sanitize regex pattern
+fn validate_regex_pattern(pattern: Option<String>) -> Option<String> {
+    pattern.and_then(|p| {
+        if p.len() > MAX_REGEX_LENGTH {
+            None // Reject overly long patterns
+        } else if p.trim().is_empty() {
+            None // Reject empty patterns
+        } else {
+            Some(p)
+        }
+    })
 }
 
 /// Run a comparison - main Tauri command
@@ -207,29 +302,33 @@ async fn run_comparison(
     let progress = TauriProgressReporter::new(app_handle.clone());
     
     let compare_config = ui_config_to_compare_config(&config);
-    let path1 = PathBuf::from(&config.path1);
-    let path2 = PathBuf::from(&config.path2);
     
-    // Validate paths exist
-    if !path1.exists() {
-        return Ok(CompareResponse {
-            success: false,
-            summary: None,
-            results: vec![],
-            error: Some(format!("Path does not exist: {}", config.path1)),
-            results_dir: None,
-        });
-    }
+    // Validate and canonicalize paths to prevent path traversal
+    let path1 = match validate_path(&config.path1) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(CompareResponse {
+                success: false,
+                summary: None,
+                results: vec![],
+                error: Some(e),
+                results_dir: None,
+            });
+        }
+    };
     
-    if !path2.exists() {
-        return Ok(CompareResponse {
-            success: false,
-            summary: None,
-            results: vec![],
-            error: Some(format!("Path does not exist: {}", config.path2)),
-            results_dir: None,
-        });
-    }
+    let path2 = match validate_path(&config.path2) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(CompareResponse {
+                success: false,
+                summary: None,
+                results: vec![],
+                error: Some(e),
+                results_dir: None,
+            });
+        }
+    };
     
     // Run comparison in a blocking task
     let results_base = compare_config.results_base.clone();
