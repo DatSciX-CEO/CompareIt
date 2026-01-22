@@ -97,6 +97,9 @@ pub fn compare_text_files(
             }
         }
         SimilarityAlgorithm::CharJaro => jaro_winkler(&text1, &text2),
+        SimilarityAlgorithm::Levenshtein => strsim::normalized_levenshtein(&text1, &text2),
+        SimilarityAlgorithm::DamerauLevenshtein => strsim::normalized_damerau_levenshtein(&text1, &text2),
+        SimilarityAlgorithm::SorensenDice => strsim::sorensen_dice(&text1, &text2),
     };
 
     // Generate unified diff format

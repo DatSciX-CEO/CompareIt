@@ -114,7 +114,19 @@ pub enum SimilarityAlgorithm {
     ///
     /// Better for short strings or when typo tolerance is needed.
     CharJaro,
-}
+    /// Levenshtein distance (edit distance)
+    ///
+    /// The number of edits (insertions, deletions, substitutions) needed to
+    /// transform one string into the other. Normalized to 0.0-1.0.
+    Levenshtein,
+    /// Damerau-Levenshtein distance
+    ///
+    /// Like Levenshtein but allows transposition of adjacent characters.
+    DamerauLevenshtein,
+    /// Sorensen-Dice coefficient
+    ///
+    /// Measure of similarity based on bigrams. 2 * |intersection| / (|X| + |Y|).
+    SorensenDice,
 
 /// Pairing strategy for folder comparison
 ///
