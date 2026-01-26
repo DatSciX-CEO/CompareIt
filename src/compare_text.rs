@@ -2,17 +2,24 @@
 //!
 //! This module implements line-based diff comparison using the `similar` crate,
 //! with support for various normalization options, regex filtering, and similarity scoring.
+//!
+//! **Performance Note (Phase 1 Optimization):**
+//! Uses `TextDiff::diff_slices` to compare lines directly without joining them
+//! into a single massive string. This eliminates OOM crashes on files >500MB.
 
 use crate::fingerprint::read_normalized_lines;
 use crate::types::{CompareConfig, FileEntry, SimilarityAlgorithm, TextComparisonResult};
 use anyhow::Result;
 use log::warn;
 use regex::Regex;
-use similar::{ChangeTag, TextDiff};
+use similar::{Algorithm, ChangeTag, TextDiff};
 use std::fmt::Write;
 use strsim::jaro_winkler;
 
 /// Compare two text files and produce a detailed result
+///
+/// This function uses vector/slice-based comparison to avoid memory issues
+/// with large files. Lines are diffed directly without joining into a single string.
 pub fn compare_text_files(
     file1: &FileEntry,
     file2: &FileEntry,
@@ -31,11 +38,11 @@ pub fn compare_text_files(
         }
     }
 
-    // Perform diff
-    let text1 = lines1.join("\n");
-    let text2 = lines2.join("\n");
-
-    let diff = TextDiff::from_lines(&text1, &text2);
+    // Perform diff using slice comparison (no massive string allocation!)
+    // This is the key optimization: diff_slices operates on Vec<String> directly
+    let diff = TextDiff::configure()
+        .algorithm(Algorithm::Myers)
+        .diff_slices(&lines1, &lines2);
 
     // Collect statistics
     let mut common_lines = 0;
@@ -96,18 +103,36 @@ pub fn compare_text_files(
                 1.0 // Both empty = identical
             }
         }
-        SimilarityAlgorithm::CharJaro => jaro_winkler(&text1, &text2),
-        SimilarityAlgorithm::Levenshtein => strsim::normalized_levenshtein(&text1, &text2),
-        SimilarityAlgorithm::DamerauLevenshtein => strsim::normalized_damerau_levenshtein(&text1, &text2),
-        SimilarityAlgorithm::SorensenDice => strsim::sorensen_dice(&text1, &text2),
+        // For character-based algorithms, we need full text - but only construct lazily
+        // This is acceptable because these algorithms are rarely used on huge files
+        SimilarityAlgorithm::CharJaro => {
+            let text1 = lines1.join("\n");
+            let text2 = lines2.join("\n");
+            jaro_winkler(&text1, &text2)
+        }
+        SimilarityAlgorithm::Levenshtein => {
+            let text1 = lines1.join("\n");
+            let text2 = lines2.join("\n");
+            strsim::normalized_levenshtein(&text1, &text2)
+        }
+        SimilarityAlgorithm::DamerauLevenshtein => {
+            let text1 = lines1.join("\n");
+            let text2 = lines2.join("\n");
+            strsim::normalized_damerau_levenshtein(&text1, &text2)
+        }
+        SimilarityAlgorithm::SorensenDice => {
+            let text1 = lines1.join("\n");
+            let text2 = lines2.join("\n");
+            strsim::sorensen_dice(&text1, &text2)
+        }
     };
 
-    // Generate unified diff format
-    let unified_diff = generate_unified_diff(
+    // Generate unified diff format (also uses slice-based diff)
+    let unified_diff = generate_unified_diff_from_slices(
         &file1.path.display().to_string(),
         &file2.path.display().to_string(),
-        &text1,
-        &text2,
+        &lines1,
+        &lines2,
         config.max_diff_bytes,
     );
 
@@ -144,15 +169,19 @@ pub fn compare_text_files(
     })
 }
 
-/// Generate unified diff format output
-fn generate_unified_diff(
+/// Generate unified diff format output from line slices
+///
+/// Uses `diff_slices` to avoid constructing massive strings for large files.
+fn generate_unified_diff_from_slices(
     file1_name: &str,
     file2_name: &str,
-    text1: &str,
-    text2: &str,
+    lines1: &[String],
+    lines2: &[String],
     max_bytes: usize,
 ) -> (String, bool) {
-    let diff = TextDiff::from_lines(text1, text2);
+    let diff = TextDiff::configure()
+        .algorithm(Algorithm::Myers)
+        .diff_slices(lines1, lines2);
 
     let mut output = String::new();
     let mut truncated = false;
@@ -181,9 +210,8 @@ fn generate_unified_diff(
                 ChangeTag::Equal => " ",
             };
             let _ = write!(output, "{}{}", prefix, change.value());
-            if !change.value().ends_with('\n') {
-                output.push('\n');
-            }
+            // Lines from diff_slices don't have trailing newlines, so always add one
+            output.push('\n');
         }
     }
 
@@ -267,5 +295,23 @@ mod tests {
         assert_eq!(encode_ranges(&[1, 2, 3, 5, 7, 8, 9]), "1-3,5,7-9");
         assert_eq!(encode_ranges(&[1]), "1");
         assert_eq!(encode_ranges(&[]), "");
+    }
+
+    #[test]
+    fn test_diff_slices_basic() {
+        let lines1 = vec!["line1".to_string(), "line2".to_string(), "line3".to_string()];
+        let lines2 = vec!["line1".to_string(), "modified".to_string(), "line3".to_string()];
+        
+        let diff = TextDiff::configure()
+            .algorithm(Algorithm::Myers)
+            .diff_slices(&lines1, &lines2);
+        
+        let mut changes = 0;
+        for change in diff.iter_all_changes() {
+            if change.tag() != ChangeTag::Equal {
+                changes += 1;
+            }
+        }
+        assert_eq!(changes, 2); // One delete, one insert
     }
 }

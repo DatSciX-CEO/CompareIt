@@ -10,7 +10,7 @@ use std::path::PathBuf;
 ///
 /// The file type determines which comparison algorithm is used:
 /// - `Text`: Line-by-line diff comparison using the Myers algorithm
-/// - `Csv`/`Tsv`: Key-based record comparison with field-level mismatch tracking
+/// - `Csv`/`Tsv`/`Excel`: Key-based record comparison with field-level mismatch tracking
 /// - `Binary`: Hash-only comparison (identical or different)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileType {
@@ -20,6 +20,10 @@ pub enum FileType {
     Csv,
     /// TSV file (tab-separated) - compared like CSV
     Tsv,
+    /// Excel/OpenDocument spreadsheet - compared like CSV using calamine
+    ///
+    /// Supports .xlsx, .xls, .xlsm, .xlsb, .xla, .xlam, and .ods formats.
+    Excel,
     /// Binary file - only hash comparison is performed
     Binary,
     /// Unknown or unreadable file type
@@ -27,12 +31,12 @@ pub enum FileType {
 }
 
 impl FileType {
-    /// Returns true if this is a structured file type (CSV or TSV)
+    /// Returns true if this is a structured file type (CSV, TSV, or Excel)
     ///
     /// Structured files are compared using key-based record matching
     /// rather than line-by-line diffing.
     pub fn is_structured(&self) -> bool {
-        matches!(self, FileType::Csv | FileType::Tsv)
+        matches!(self, FileType::Csv | FileType::Tsv | FileType::Excel)
     }
 }
 

@@ -2,9 +2,13 @@
 //!
 //! This module handles recursive directory scanning, file type detection,
 //! and initial metadata collection.
+//!
+//! **Phase 3 Enhancement:** Now supports Excel/OpenDocument spreadsheet detection
+//! using the `calamine` crate.
 
 use crate::types::{FileEntry, FileType};
 use anyhow::{Context, Result};
+use calamine::{open_workbook_auto, Reader};
 use globset::{Glob, GlobSetBuilder};
 use log::warn;
 use rayon::prelude::*;
@@ -12,6 +16,9 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+/// Excel/OpenDocument spreadsheet extensions supported by calamine
+const EXCEL_EXTENSIONS: &[&str] = &["xlsx", "xls", "xlsm", "xlsb", "xla", "xlam", "ods"];
 
 /// Index files from a path (file or directory)
 ///
@@ -128,7 +135,12 @@ pub fn index_single_file(path: &Path) -> Result<FileEntry> {
 
 /// Detect file type by examining content and extension
 fn detect_file_type(path: &Path, extension: &str) -> Result<(FileType, usize, Option<Vec<String>>)> {
-    // Check extension first for structured files
+    // Check for Excel/OpenDocument spreadsheet first (by extension)
+    if EXCEL_EXTENSIONS.contains(&extension) {
+        return detect_excel_type(path);
+    }
+
+    // Check extension for CSV/TSV
     let is_csv_ext = extension == "csv";
     let is_tsv_ext = extension == "tsv" || extension == "tab";
 
@@ -216,6 +228,43 @@ fn detect_file_type(path: &Path, extension: &str) -> Result<(FileType, usize, Op
     Ok((FileType::Text, line_count, None))
 }
 
+/// Detect Excel/OpenDocument spreadsheet type using calamine
+///
+/// Extracts headers from the first row of the first worksheet.
+fn detect_excel_type(path: &Path) -> Result<(FileType, usize, Option<Vec<String>>)> {
+    // Open workbook using auto-detection (supports xlsx, xls, ods, etc.)
+    let mut workbook = open_workbook_auto(path)
+        .with_context(|| format!("Failed to open Excel file: {}", path.display()))?;
+
+    // Get sheet names
+    let sheet_names = workbook.sheet_names().to_vec();
+    if sheet_names.is_empty() {
+        return Ok((FileType::Excel, 0, None));
+    }
+
+    // Read first sheet
+    let first_sheet = &sheet_names[0];
+    let range = workbook
+        .worksheet_range(first_sheet)
+        .with_context(|| format!("Failed to read worksheet '{}' from {}", first_sheet, path.display()))?;
+
+    // Count rows (excluding header)
+    let row_count = if range.rows().count() > 0 {
+        range.rows().count() - 1
+    } else {
+        0
+    };
+
+    // Extract headers from first row
+    let columns: Option<Vec<String>> = range.rows().next().map(|row| {
+        row.iter()
+            .map(|cell| cell.to_string().trim().to_string())
+            .collect()
+    });
+
+    Ok((FileType::Excel, row_count, columns))
+}
+
 /// Parse a header line with the given delimiter
 fn parse_header(line: &str, delimiter: char) -> Option<Vec<String>> {
     let parts: Vec<&str> = line.split(delimiter).collect();
@@ -263,5 +312,13 @@ mod tests {
     fn test_try_detect_structured() {
         assert!(try_detect_structured("a,b,c", ',').is_some());
         assert!(try_detect_structured("single_column", ',').is_none());
+    }
+
+    #[test]
+    fn test_excel_extensions() {
+        assert!(EXCEL_EXTENSIONS.contains(&"xlsx"));
+        assert!(EXCEL_EXTENSIONS.contains(&"xls"));
+        assert!(EXCEL_EXTENSIONS.contains(&"ods"));
+        assert!(!EXCEL_EXTENSIONS.contains(&"csv"));
     }
 }
