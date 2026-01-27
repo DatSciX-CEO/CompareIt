@@ -131,6 +131,47 @@ pub enum SimilarityAlgorithm {
     ///
     /// Measure of similarity based on bigrams. 2 * |intersection| / (|X| + |Y|).
     SorensenDice,
+    /// Jaccard Index (Token Sets)
+    ///
+    /// Intersection over Union of the set of unique words. |A ∩ B| / |A ∪ B|.
+    /// Good for "bag of words" matching where order doesn't matter.
+    Jaccard,
+    /// Cosine Similarity (Vector Space)
+    ///
+    /// Measures the cosine of the angle between two term-frequency vectors.
+    /// Good for document similarity (detecting if topics are matching).
+    Cosine,
+    /// Ratcliff/Obershelp (Gestalt Pattern Matching)
+    ///
+    /// The algorithm used by Python's `difflib`. Recursively finds the longest
+    /// common substring. Excellent for finding "moved blocks" of text.
+    RatcliffObershelp,
+    /// Smith-Waterman (Local Alignment)
+    ///
+    /// Dynamic programming algorithm for finding the optimal local alignment.
+    /// Heavy computation but excellent for finding related logic buried in noise.
+    SmithWaterman,
+    /// Longest Common Subsequence (LCS)
+    ///
+    /// Finds the longest subsequence common to both files. Unlike LCS-substring,
+    /// elements don't need to be contiguous. Great for detecting reordering.
+    Lcs,
+    /// Hamming Distance (Fixed-Length)
+    ///
+    /// Counts positions where corresponding elements differ. Very fast but only
+    /// meaningful when files have similar line counts.
+    Hamming,
+    /// N-Gram Similarity (Shingling)
+    ///
+    /// Compares overlapping character sequences (n-grams/shingles).
+    /// More granular than word-based, catches partial word matches.
+    NGram,
+    /// TF-IDF Weighted Cosine
+    ///
+    /// Like Cosine but weights terms by their rarity (inverse document frequency).
+    /// Better for finding meaningful keyword overlap vs common words.
+    TfIdf,
+}
 
 /// Pairing strategy for folder comparison
 ///
