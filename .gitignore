@@ -2,6 +2,9 @@
 /target/
 Cargo.lock
 /src-tauri/target/
+error
+/error
+
 
 # IDE
 .idea/

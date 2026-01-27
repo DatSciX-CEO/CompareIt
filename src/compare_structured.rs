@@ -16,7 +16,7 @@ use crate::types::{
     ColumnMismatch, CompareConfig, FieldMismatch, FileEntry, FileType, StructuredComparisonResult,
 };
 use anyhow::{Context, Result};
-use calamine::{open_workbook_auto, DataType, Reader};
+use calamine::{open_workbook_auto, Data, Reader};
 use csv::{ByteRecord, ReaderBuilder};
 use rayon::prelude::*;
 use std::cmp::Ordering;
@@ -238,7 +238,7 @@ pub fn get_delimiter(file_type: &FileType) -> u8 {
 /// Parse a CSV/TSV file into a vector of keyed records (memory-efficient)
 ///
 /// Returns headers and a vector of (key, ByteRecord) pairs ready for sorting.
-pub fn parse_csv_into_sorted_vec(
+fn parse_csv_into_sorted_vec(
     path: &Path,
     delimiter: u8,
     key_columns: &[String],
@@ -295,7 +295,7 @@ pub fn parse_csv_into_sorted_vec(
 ///
 /// Uses calamine to read the first worksheet and converts rows into ByteRecords
 /// for compatibility with the CSV comparison engine.
-pub fn parse_excel_into_sorted_vec(
+fn parse_excel_into_sorted_vec(
     path: &Path,
     key_columns: &[String],
 ) -> Result<(Vec<String>, Vec<KeyedRecord>)> {
@@ -371,12 +371,12 @@ pub fn parse_excel_into_sorted_vec(
 /// - Booleans: "TRUE" / "FALSE"
 /// - Errors: "#ERROR"
 /// - Empty: ""
-fn excel_cell_to_string(cell: &DataType) -> String {
+fn excel_cell_to_string(cell: &Data) -> String {
     match cell {
-        DataType::Empty => String::new(),
-        DataType::String(s) => s.clone(),
-        DataType::Int(i) => i.to_string(),
-        DataType::Float(f) => {
+        Data::Empty => String::new(),
+        Data::String(s) => s.clone(),
+        Data::Int(i) => i.to_string(),
+        Data::Float(f) => {
             // Use full precision to avoid comparison issues
             if f.fract() == 0.0 {
                 format!("{:.0}", f)
@@ -384,12 +384,11 @@ fn excel_cell_to_string(cell: &DataType) -> String {
                 f.to_string()
             }
         }
-        DataType::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
-        DataType::Error(e) => format!("#ERROR:{:?}", e),
-        DataType::DateTime(dt) => dt.to_string(),
-        DataType::Duration(d) => d.to_string(),
-        DataType::DateTimeIso(s) => s.clone(),
-        DataType::DurationIso(s) => s.clone(),
+        Data::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
+        Data::Error(e) => format!("#ERROR:{:?}", e),
+        Data::DateTime(dt) => dt.to_string(),
+        Data::DateTimeIso(s) => s.clone(),
+        Data::DurationIso(s) => s.clone(),
     }
 }
 
@@ -444,13 +443,13 @@ mod tests {
 
     #[test]
     fn test_excel_cell_to_string() {
-        assert_eq!(excel_cell_to_string(&DataType::Empty), "");
-        assert_eq!(excel_cell_to_string(&DataType::String("test".to_string())), "test");
-        assert_eq!(excel_cell_to_string(&DataType::Int(42)), "42");
-        assert_eq!(excel_cell_to_string(&DataType::Float(3.14)), "3.14");
-        assert_eq!(excel_cell_to_string(&DataType::Float(42.0)), "42");
-        assert_eq!(excel_cell_to_string(&DataType::Bool(true)), "TRUE");
-        assert_eq!(excel_cell_to_string(&DataType::Bool(false)), "FALSE");
+        assert_eq!(excel_cell_to_string(&Data::Empty), "");
+        assert_eq!(excel_cell_to_string(&Data::String("test".to_string())), "test");
+        assert_eq!(excel_cell_to_string(&Data::Int(42)), "42");
+        assert_eq!(excel_cell_to_string(&Data::Float(3.14)), "3.14");
+        assert_eq!(excel_cell_to_string(&Data::Float(42.0)), "42");
+        assert_eq!(excel_cell_to_string(&Data::Bool(true)), "TRUE");
+        assert_eq!(excel_cell_to_string(&Data::Bool(false)), "FALSE");
     }
 
     #[test]

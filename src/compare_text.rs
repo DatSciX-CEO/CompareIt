@@ -39,11 +39,14 @@ pub fn compare_text_files(
         }
     }
 
+    let refs1: Vec<&str> = lines1.iter().map(|s| s.as_str()).collect();
+    let refs2: Vec<&str> = lines2.iter().map(|s| s.as_str()).collect();
+
     // Perform diff using slice comparison (no massive string allocation!)
     // This is the key optimization: diff_slices operates on Vec<String> directly
     let diff = TextDiff::configure()
         .algorithm(Algorithm::Myers)
-        .diff_slices(&lines1, &lines2);
+        .diff_slices(&refs1, &refs2);
 
     // Collect statistics
     let mut common_lines = 0;
@@ -133,8 +136,9 @@ pub fn compare_text_files(
             // but is highly optimized (unlike a naive manual implementation)
             TextDiff::configure()
                 .algorithm(Algorithm::Myers)
-                .diff_slices(&lines1, &lines2)
+                .diff_slices(&refs1, &refs2)
                 .ratio()
+                .into()
         }
         SimilarityAlgorithm::SmithWaterman => {
             // Full Smith-Waterman is O(N*M) and will hang on large files.
@@ -199,9 +203,13 @@ fn generate_unified_diff_from_slices(
     lines2: &[String],
     max_bytes: usize,
 ) -> (String, bool) {
+    // Convert &[String] to Vec<&str> for diff_slices compatibility
+    let refs1: Vec<&str> = lines1.iter().map(|s| s.as_str()).collect();
+    let refs2: Vec<&str> = lines2.iter().map(|s| s.as_str()).collect();
+
     let diff = TextDiff::configure()
         .algorithm(Algorithm::Myers)
-        .diff_slices(lines1, lines2);
+        .diff_slices(&refs1, &refs2);
 
     let mut output = String::new();
     let mut truncated = false;
@@ -390,10 +398,13 @@ fn calculate_token_smith_waterman(lines1: &[String], lines2: &[String]) -> f64 {
     // If files are huge, simple Myers diff ratio is better than O(N*M) Smith-Waterman
     // Fallback if too large (>2000 lines) to prevent hangs
     if lines1.len() > 2000 || lines2.len() > 2000 {
+        let refs1: Vec<&str> = lines1.iter().map(|s| s.as_str()).collect();
+        let refs2: Vec<&str> = lines2.iter().map(|s| s.as_str()).collect();
         return TextDiff::configure()
             .algorithm(Algorithm::Myers)
-            .diff_slices(lines1, lines2)
-            .ratio();
+            .diff_slices(&refs1, &refs2)
+            .ratio()
+            .into();
     }
 
     let n = lines1.len();
@@ -401,15 +412,15 @@ fn calculate_token_smith_waterman(lines1: &[String], lines2: &[String]) -> f64 {
     if n == 0 && m == 0 { return 1.0; }
     if n == 0 || m == 0 { return 0.0; }
 
-    let match_score = 2.0;
-    let mismatch_score = -1.0;
-    let gap_score = -1.0;
+    let match_score: f64 = 2.0;
+    let mismatch_score: f64 = -1.0;
+    let gap_score: f64 = -1.0;
 
     // Standard DP matrix: (n+1) x (m+1) - flattened
     // Note: This optimization is crucial for memory, but for SW we really need the whole matrix
     // or at least 2 rows. Here we use 1 row + prev variable to simulate
-    let mut matrix = vec![0.0; m + 1];
-    let mut max_score = 0.0;
+    let mut matrix: Vec<f64> = vec![0.0; m + 1];
+    let mut max_score: f64 = 0.0;
 
     for i in 1..=n {
         let mut prev_diag = 0.0; // Matrix[i-1][j-1]
@@ -454,10 +465,13 @@ fn calculate_lcs_similarity(lines1: &[String], lines2: &[String]) -> f64 {
     
     // Fallback for very large files
     if n > 5000 || m > 5000 {
+        let refs1: Vec<&str> = lines1.iter().map(|s| s.as_str()).collect();
+        let refs2: Vec<&str> = lines2.iter().map(|s| s.as_str()).collect();
         return TextDiff::configure()
             .algorithm(Algorithm::Myers)
-            .diff_slices(lines1, lines2)
-            .ratio();
+            .diff_slices(&refs1, &refs2)
+            .ratio()
+            .into();
     }
     
     // Standard LCS DP with space optimization (only need previous row)
@@ -609,9 +623,13 @@ mod tests {
         let lines1 = vec!["line1".to_string(), "line2".to_string(), "line3".to_string()];
         let lines2 = vec!["line1".to_string(), "modified".to_string(), "line3".to_string()];
         
+        // Convert to &str slices for diff_slices
+        let refs1: Vec<&str> = lines1.iter().map(|s| s.as_str()).collect();
+        let refs2: Vec<&str> = lines2.iter().map(|s| s.as_str()).collect();
+        
         let diff = TextDiff::configure()
             .algorithm(Algorithm::Myers)
-            .diff_slices(&lines1, &lines2);
+            .diff_slices(&refs1, &refs2);
         
         let mut changes = 0;
         for change in diff.iter_all_changes() {

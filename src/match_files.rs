@@ -270,7 +270,7 @@ fn extensions_compatible(ext1: &str, ext2: &str) -> bool {
 
     // Define extension groups that are compatible
     let text_exts = ["txt", "log", "md", "rst", ""];
-    let csv_exts = ["csv", "tsv", "tab"];
+    let csv_exts = ["csv", "tsv", "tab", "xlsx", "xls", "xlsm", "xlsb", "ods"];
     let code_exts = ["rs", "py", "js", "ts", "java", "c", "cpp", "h", "hpp", "go"];
     let config_exts = ["json", "yaml", "yml", "toml", "ini", "cfg"];
 

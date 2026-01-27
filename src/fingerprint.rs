@@ -75,7 +75,7 @@ fn compute_fingerprint_for_entry(
             );
         }
         // Still compute schema signature for structured files (it's lightweight)
-        if let (FileType::Csv | FileType::Tsv, Some(ref columns)) = (&entry.file_type, &entry.columns) {
+        if let (FileType::Csv | FileType::Tsv | FileType::Excel, Some(ref columns)) = (&entry.file_type, &entry.columns) {
             entry.schema_signature = Some(compute_schema_signature(columns));
         }
         return Ok(());
@@ -95,9 +95,17 @@ fn compute_fingerprint_for_entry(
             if let Some(ref columns) = entry.columns {
                 entry.schema_signature = Some(compute_schema_signature(columns));
             }
-            // Also compute simhash on the content for similarity matching
+            // Compute simhash on the text content for similarity matching
             let text = String::from_utf8_lossy(&content);
             entry.simhash = Some(compute_simhash(&text, normalization));
+        }
+        FileType::Excel => {
+            // Excel files are binary ZIP archives - do NOT compute simhash on raw bytes.
+            // Only use schema signature for matching Excel files.
+            if let Some(ref columns) = entry.columns {
+                entry.schema_signature = Some(compute_schema_signature(columns));
+            }
+            // No simhash for Excel - the raw bytes are not meaningful text
         }
         FileType::Binary | FileType::Unknown => {
             // No simhash for binary files
