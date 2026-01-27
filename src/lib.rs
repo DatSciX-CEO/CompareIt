@@ -15,8 +15,11 @@ pub mod types;
 use anyhow::{Context, Result};
 use chrono::Local;
 use rayon::prelude::*;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::compare_structured::compare_structured_files;
 use crate::compare_text::compare_text_files;
@@ -240,20 +243,46 @@ pub fn create_identical_result(file1: &FileEntry, file2: &FileEntry) -> Comparis
     }
 }
 
-/// Ensure the results directory exists at the specified path
-pub fn ensure_results_dir(base_path: &Path) -> Result<PathBuf> {
-    if !base_path.exists() {
-        fs::create_dir_all(base_path)
-            .context("Failed to create results directory")?;
-    }
-    Ok(base_path.to_path_buf())
+/// Generate a short unique ID for the run
+fn generate_run_id() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    
+    let mut hasher = DefaultHasher::new();
+    now.as_nanos().hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    
+    let hash = hasher.finish();
+    format!("{:08x}", hash as u32) // 8-char hex ID
 }
 
-/// Get full paths for automatic export files
-pub fn get_auto_export_paths(results_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+/// Ensure the results directory exists and create a unique run subfolder
+///
+/// Creates a subfolder with format: `run_YYYYMMDD_HHMMSS_<unique-id>`
+/// This keeps each comparison run isolated and prevents overwriting.
+pub fn ensure_results_dir(base_path: &Path) -> Result<PathBuf> {
+    // Ensure base directory exists
+    if !base_path.exists() {
+        fs::create_dir_all(base_path)
+            .context("Failed to create base output directory")?;
+    }
+    
+    // Create unique run subfolder (date_time_id format)
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-    let jsonl_path = results_dir.join(format!("compare_{}_results.jsonl", timestamp));
-    let html_path = results_dir.join(format!("compare_{}_report.html", timestamp));
-    let artifacts_dir = results_dir.join(format!("artifacts_{}", timestamp));
+    let run_id = generate_run_id();
+    let run_folder = base_path.join(format!("{}_{}", timestamp, run_id));
+    
+    fs::create_dir_all(&run_folder)
+        .context("Failed to create run directory")?;
+    
+    Ok(run_folder)
+}
+
+/// Get full paths for automatic export files within the run directory
+pub fn get_auto_export_paths(run_dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let jsonl_path = run_dir.join("results.jsonl");
+    let html_path = run_dir.join("report.html");
+    let artifacts_dir = run_dir.join("artifacts");
     (jsonl_path, html_path, artifacts_dir)
 }

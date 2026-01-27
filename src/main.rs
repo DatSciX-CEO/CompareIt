@@ -120,8 +120,8 @@ enum Commands {
         #[arg(long)]
         out_dir: Option<PathBuf>,
 
-        /// Base directory for results (contains timestamped JSONL, HTML, artifacts)
-        #[arg(short = 'B', long, default_value = "results")]
+        /// Base directory for results (each run creates a unique subfolder)
+        #[arg(short = 'B', long, default_value = "output")]
         results_base: PathBuf,
 
         /// Verbose output
