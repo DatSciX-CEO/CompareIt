@@ -34,6 +34,8 @@ Whether you are validating a 700MB+ CSV migration, auditing Excel financial mode
 ### 🚄 Massive Scale & Performance
 *   **Zero-Copy Slicing**: Compares huge text files without allocating massive strings, reducing RAM usage by ~50%.
 *   **Parallel Sort-Merge**: Uses `rayon` to sort millions of CSV rows in parallel, enabling fast set-based logic.
+*   **Dynamic Memory Safety**: Automatically adjusts memory usage (defaulting to 5% safe RAM limit) to prevent system hangs, with a smart fallback to hash-only mode for massive files.
+*   **Detailed Process Stats**: Reports provide deep visibility into execution time, memory throughput (MB/s), and peak RAM usage for every run.
 *   **Streaming Hash**: Identifies binary file matches using `Blake3` streaming, regardless of file size.
 
 ### 🕵️ Deep Forensic Audit
