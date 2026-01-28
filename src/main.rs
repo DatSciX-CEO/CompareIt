@@ -201,6 +201,7 @@ fn main() -> Result<()> {
                 exclude_patterns: exclude,
                 ignore_columns,
                 ignore_regex,
+                max_fingerprint_size: None, // Use dynamic calculation based on system RAM
             };
 
             run_compare(&path1, &path2, &config)?;
@@ -272,8 +273,8 @@ fn run_compare(path1: &PathBuf, path2: &PathBuf, config: &CompareConfig) -> Resu
     let engine = ComparisonEngine::new(config).with_progress(&progress);
     let results = engine.run(path1, path2)?;
 
-    // Calculate summary for display
-    let summary = calculate_summary(&results, 0, 0);
+    // Calculate summary for display (engine already captured process stats in its summary)
+    let summary = calculate_summary(&results, 0, 0, None);
 
     // Display results table
     println!("\n{}", style("Results Summary").cyan().bold());
@@ -315,7 +316,7 @@ fn run_report(input: &PathBuf, html: &PathBuf, artifacts: Option<&std::path::Pat
     let results = load_results_from_jsonl(input)?;
     println!("  Loaded {} comparison results", style(results.len()).green());
 
-    let summary = calculate_summary(&results, 0, 0);
+    let summary = calculate_summary(&results, 0, 0, None);
 
     println!("\nGenerating HTML report...");
     generate_html_report(&results, &summary, html, artifacts)?;

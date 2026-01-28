@@ -187,8 +187,30 @@ fn sanitize_filename(s: &str) -> String {
         .collect()
 }
 
+/// Process statistics captured during comparison execution
+#[derive(Debug, Clone, Default)]
+pub struct ProcessStats {
+    /// Execution time in milliseconds
+    pub execution_time_ms: Option<u64>,
+    /// Processing speed in MB/s
+    pub processing_speed_mb_per_sec: Option<f64>,
+    /// Peak memory usage in bytes
+    pub peak_memory_usage_bytes: Option<u64>,
+    /// Total bytes processed
+    pub total_data_processed_bytes: Option<u64>,
+    /// Comparison mode string (e.g., "Auto", "Text")
+    pub comparison_mode: Option<String>,
+    /// Similarity algorithm string (e.g., "Diff", "Cosine")
+    pub similarity_algorithm: Option<String>,
+}
+
 /// Calculate summary statistics for a set of results
-pub fn calculate_summary(results: &[ComparisonResult], total1: usize, total2: usize) -> ComparisonSummary {
+pub fn calculate_summary(
+    results: &[ComparisonResult],
+    total1: usize,
+    total2: usize,
+    process_stats: Option<ProcessStats>,
+) -> ComparisonSummary {
     let mut identical = 0;
     let mut different = 0;
     let mut errors = 0;
@@ -217,6 +239,19 @@ pub fn calculate_summary(results: &[ComparisonResult], total1: usize, total2: us
     let min_similarity = similarities.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_similarity = similarities.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
+    // Extract process stats if provided
+    let (exec_time, speed, memory, data_bytes, mode, algo) = match process_stats {
+        Some(stats) => (
+            stats.execution_time_ms,
+            stats.processing_speed_mb_per_sec,
+            stats.peak_memory_usage_bytes,
+            stats.total_data_processed_bytes,
+            stats.comparison_mode,
+            stats.similarity_algorithm,
+        ),
+        None => (None, None, None, None, None, None),
+    };
+
     ComparisonSummary {
         total_files_set1: total1,
         total_files_set2: total2,
@@ -227,6 +262,12 @@ pub fn calculate_summary(results: &[ComparisonResult], total1: usize, total2: us
         average_similarity: if average_similarity.is_nan() { 0.0 } else { average_similarity },
         min_similarity: if min_similarity.is_infinite() { 0.0 } else { min_similarity },
         max_similarity: if max_similarity.is_infinite() { 0.0 } else { max_similarity },
+        execution_time_ms: exec_time,
+        processing_speed_mb_per_sec: speed,
+        peak_memory_usage_bytes: memory,
+        total_data_processed_bytes: data_bytes,
+        comparison_mode: mode,
+        similarity_algorithm: algo,
     }
 }
 

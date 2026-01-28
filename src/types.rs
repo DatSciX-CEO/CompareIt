@@ -316,7 +316,6 @@ impl Default for CompareConfig {
             verbose: false,
             exclude_patterns: Vec::new(),
             ignore_columns: Vec::new(),
-            ignore_columns: Vec::new(),
             ignore_regex: None,
             max_fingerprint_size: None,
         }
@@ -570,4 +569,32 @@ pub struct ComparisonSummary {
     pub min_similarity: f64,
     /// Maximum similarity score (most similar non-identical pair)
     pub max_similarity: f64,
+
+    // ─────────────────────────────────────────────────────────────
+    // Process Statistics (Optional - populated during engine run)
+    // ─────────────────────────────────────────────────────────────
+
+    /// Total execution time in milliseconds
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_time_ms: Option<u64>,
+
+    /// Processing speed in megabytes per second
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub processing_speed_mb_per_sec: Option<f64>,
+
+    /// Peak memory usage in bytes (process RSS at end of comparison)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_memory_usage_bytes: Option<u64>,
+
+    /// Total data processed in bytes (sum of all compared file sizes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_data_processed_bytes: Option<u64>,
+
+    /// Comparison mode used (e.g., "Auto", "Text", "Structured")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison_mode: Option<String>,
+
+    /// Similarity algorithm used (e.g., "Diff", "Levenshtein", "Cosine")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similarity_algorithm: Option<String>,
 }

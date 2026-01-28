@@ -19,11 +19,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
 use crate::compare_structured::compare_structured_files;
 use crate::compare_text::compare_text_files;
-use crate::export::{calculate_summary, export_all};
+use crate::export::{calculate_summary, export_all, ProcessStats};
 use crate::fingerprint::compute_fingerprints;
 use crate::index::index_path;
 use crate::match_files::generate_candidates;
@@ -68,6 +69,11 @@ impl<'a> ComparisonEngine<'a> {
 
     /// Run the full comparison pipeline
     pub fn run(&self, path1: &PathBuf, path2: &PathBuf) -> Result<Vec<ComparisonResult>> {
+        // ─────────────────────────────────────────────────────────────
+        // Start timing for process statistics
+        // ─────────────────────────────────────────────────────────────
+        let start_time = Instant::now();
+
         // Set up automatic results directory using config.results_base
         let results_dir = ensure_results_dir(&self.config.results_base)?;
         let (auto_jsonl_path, auto_html_path, auto_artifacts_dir) = get_auto_export_paths(&results_dir);
@@ -76,6 +82,12 @@ impl<'a> ComparisonEngine<'a> {
         if let Some(p) = self.progress { p.start(0, "Indexing files..."); }
         let mut files1 = index_path(path1, &self.config.exclude_patterns).context("Failed to index path1")?;
         let mut files2 = index_path(path2, &self.config.exclude_patterns).context("Failed to index path2")?;
+
+        // ─────────────────────────────────────────────────────────────
+        // Calculate total data size for statistics
+        // ─────────────────────────────────────────────────────────────
+        let total_bytes: u64 = files1.iter().map(|f| f.size).sum::<u64>()
+            + files2.iter().map(|f| f.size).sum::<u64>();
 
         // Stage 2: Compute fingerprints
         if let Some(p) = self.progress { 
@@ -86,7 +98,6 @@ impl<'a> ComparisonEngine<'a> {
         let max_size = self.config.max_fingerprint_size.unwrap_or_else(|| {
             // Default to 5% of total system memory, capped strictly at 2GB to be safe
             // This is much better than the hardcoded 100MB limit
-            use sysinfo::System;
             let mut sys = System::new_all();
             sys.refresh_memory();
             let total_mem = sys.total_memory();
@@ -123,8 +134,44 @@ impl<'a> ComparisonEngine<'a> {
 
         if let Some(p) = self.progress { p.finish("Comparison complete"); }
 
-        // Calculate summary
-        let summary = calculate_summary(&results, files1.len(), files2.len());
+        // ─────────────────────────────────────────────────────────────
+        // Capture process statistics
+        // ─────────────────────────────────────────────────────────────
+        let elapsed_ms = start_time.elapsed().as_millis() as u64;
+        
+        // Calculate processing speed (MB/s)
+        let speed_mb_per_sec = if elapsed_ms > 0 {
+            let bytes_per_ms = total_bytes as f64 / elapsed_ms as f64;
+            bytes_per_ms * 1000.0 / (1024.0 * 1024.0) // Convert to MB/s
+        } else {
+            0.0
+        };
+
+        // Capture current process memory usage
+        let memory_usage = {
+            let sys = System::new_with_specifics(
+                RefreshKind::new().with_processes(ProcessRefreshKind::new().with_memory())
+            );
+            let pid = sysinfo::get_current_pid().ok();
+            pid.and_then(|p| sys.process(p))
+                .map(|proc| proc.memory())
+        };
+
+        // Build mode and algorithm strings for display
+        let mode_str = format!("{:?}", self.config.mode);
+        let algo_str = format!("{:?}", self.config.similarity_algorithm);
+
+        let process_stats = ProcessStats {
+            execution_time_ms: Some(elapsed_ms),
+            processing_speed_mb_per_sec: Some(speed_mb_per_sec),
+            peak_memory_usage_bytes: memory_usage,
+            total_data_processed_bytes: Some(total_bytes),
+            comparison_mode: Some(mode_str),
+            similarity_algorithm: Some(algo_str),
+        };
+
+        // Calculate summary with process stats
+        let summary = calculate_summary(&results, files1.len(), files2.len(), Some(process_stats));
 
         // Export results
         let jsonl_path = self.config.output_jsonl.as_deref().unwrap_or(&auto_jsonl_path);

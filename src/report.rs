@@ -54,6 +54,9 @@ fn build_html_report(
     // Summary cards
     html.push_str(&build_summary_cards(summary));
 
+    // Process statistics (Run Details) - only shown if stats are available
+    html.push_str(&build_process_stats(summary));
+
     // Results table
     html.push_str(&build_results_table(results, artifacts_dir));
 
@@ -430,6 +433,48 @@ fn build_html_head() -> String {
         
         a { color: var(--accent); text-decoration: none; }
         a:hover { text-decoration: underline; }
+        
+        /* Process Stats Section */
+        .process-stats {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .process-stats h3 {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 1rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-item .stat-value {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .stat-item .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+        
+        .stat-item .stat-value.accent { color: var(--accent); }
+        .stat-item .stat-value.success { color: var(--success); }
     </style>
 </head>
 "#.to_string()
@@ -514,6 +559,122 @@ fn build_summary_cards(summary: &ComparisonSummary) -> String {
         summary.error_pairs,
         summary.average_similarity * 100.0
     )
+}
+
+/// Build process statistics section (Run Details)
+fn build_process_stats(summary: &ComparisonSummary) -> String {
+    // Only show if we have process stats
+    let has_stats = summary.execution_time_ms.is_some()
+        || summary.comparison_mode.is_some()
+        || summary.similarity_algorithm.is_some();
+
+    if !has_stats {
+        return String::new();
+    }
+
+    let mut html = String::from(r#"
+        <div class="process-stats">
+            <h3>Run Details</h3>
+            <div class="stats-grid">
+"#);
+
+    // Execution Time
+    if let Some(time_ms) = summary.execution_time_ms {
+        let time_str = if time_ms >= 60_000 {
+            format!("{:.1}m", time_ms as f64 / 60_000.0)
+        } else if time_ms >= 1000 {
+            format!("{:.2}s", time_ms as f64 / 1000.0)
+        } else {
+            format!("{}ms", time_ms)
+        };
+        html.push_str(&format!(r#"
+                <div class="stat-item">
+                    <div class="stat-value accent">{}</div>
+                    <div class="stat-label">Execution Time</div>
+                </div>
+"#, time_str));
+    }
+
+    // Processing Speed
+    if let Some(speed) = summary.processing_speed_mb_per_sec {
+        let speed_str = if speed >= 1000.0 {
+            format!("{:.1} GB/s", speed / 1024.0)
+        } else {
+            format!("{:.1} MB/s", speed)
+        };
+        html.push_str(&format!(r#"
+                <div class="stat-item">
+                    <div class="stat-value success">{}</div>
+                    <div class="stat-label">Throughput</div>
+                </div>
+"#, speed_str));
+    }
+
+    // Data Processed
+    if let Some(bytes) = summary.total_data_processed_bytes {
+        let size_str = format_bytes(bytes);
+        html.push_str(&format!(r#"
+                <div class="stat-item">
+                    <div class="stat-value">{}</div>
+                    <div class="stat-label">Data Processed</div>
+                </div>
+"#, size_str));
+    }
+
+    // Memory Usage
+    if let Some(mem_bytes) = summary.peak_memory_usage_bytes {
+        let mem_str = format_bytes(mem_bytes);
+        html.push_str(&format!(r#"
+                <div class="stat-item">
+                    <div class="stat-value">{}</div>
+                    <div class="stat-label">Memory Used</div>
+                </div>
+"#, mem_str));
+    }
+
+    // Comparison Mode
+    if let Some(ref mode) = summary.comparison_mode {
+        html.push_str(&format!(r#"
+                <div class="stat-item">
+                    <div class="stat-value">{}</div>
+                    <div class="stat-label">Mode</div>
+                </div>
+"#, mode));
+    }
+
+    // Similarity Algorithm
+    if let Some(ref algo) = summary.similarity_algorithm {
+        html.push_str(&format!(r#"
+                <div class="stat-item">
+                    <div class="stat-value">{}</div>
+                    <div class="stat-label">Algorithm</div>
+                </div>
+"#, algo));
+    }
+
+    html.push_str(r#"
+            </div>
+        </div>
+"#);
+
+    html
+}
+
+/// Format bytes to human-readable string
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 /// Build results table
