@@ -82,10 +82,25 @@ impl<'a> ComparisonEngine<'a> {
             p.start((files1.len() + files2.len()) as u64, "Computing fingerprints..."); 
         }
         
-        compute_fingerprints(&mut files1, &self.config.normalization);
+        // Calculate max fingerprint size (dynamic or configured)
+        let max_size = self.config.max_fingerprint_size.unwrap_or_else(|| {
+            // Default to 5% of total system memory, capped strictly at 2GB to be safe
+            // This is much better than the hardcoded 100MB limit
+            use sysinfo::System;
+            let mut sys = System::new_all();
+            sys.refresh_memory();
+            let total_mem = sys.total_memory();
+            // sysinfo reports in bytes (despite some older docs saying KB)
+            // 5% of RAM
+            let calc_limit = total_mem / 20; 
+            // Cap at 2GB to avoid extreme cases
+            calc_limit.min(2 * 1024 * 1024 * 1024)
+        });
+
+        compute_fingerprints(&mut files1, &self.config.normalization, max_size);
         if let Some(p) = self.progress { p.inc(files1.len() as u64); }
         
-        compute_fingerprints(&mut files2, &self.config.normalization);
+        compute_fingerprints(&mut files2, &self.config.normalization, max_size);
         if let Some(p) = self.progress { p.finish("Fingerprinting complete"); }
 
         // Stage 3: Generate candidate pairs

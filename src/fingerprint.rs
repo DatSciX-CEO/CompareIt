@@ -14,18 +14,14 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read};
 
-/// Maximum file size (in bytes) for memory-intensive operations like Simhash.
-/// Files larger than this will only get a streaming Blake3 hash.
-/// Default: 100MB
-const MAX_SIMHASH_FILE_SIZE: u64 = 100 * 1024 * 1024;
-
 /// Compute all fingerprints for a set of file entries
 pub fn compute_fingerprints(
     entries: &mut [FileEntry],
     normalization: &NormalizationOptions,
+    max_file_size: u64,
 ) {
     entries.par_iter_mut().for_each(|entry| {
-        if let Err(e) = compute_fingerprint_for_entry(entry, normalization) {
+        if let Err(e) = compute_fingerprint_for_entry(entry, normalization, max_file_size) {
             warn!(
                 "Failed to fingerprint {}: {}",
                 entry.path.display(),
@@ -39,10 +35,11 @@ pub fn compute_fingerprints(
 ///
 /// Uses streaming Blake3 hash computation to handle files of any size with
 /// constant memory usage. Memory-intensive operations (Simhash) are skipped
-/// for files exceeding `MAX_SIMHASH_FILE_SIZE`.
+/// for files exceeding `max_file_size`.
 fn compute_fingerprint_for_entry(
     entry: &mut FileEntry,
     normalization: &NormalizationOptions,
+    max_file_size: u64,
 ) -> Result<()> {
     // Get file metadata to check size
     let metadata = fs::metadata(&entry.path)?;
@@ -67,11 +64,11 @@ fn compute_fingerprint_for_entry(
     entry.content_hash = hasher.finalize().to_hex().to_string();
 
     // Skip memory-intensive Simhash for large files to prevent OOM
-    if file_size > MAX_SIMHASH_FILE_SIZE {
+    if file_size > max_file_size {
         if matches!(entry.file_type, FileType::Text | FileType::Csv | FileType::Tsv) {
             warn!(
                 "File too large for similarity fingerprinting ({} bytes > {} byte limit), using hash-only: {}",
-                file_size, MAX_SIMHASH_FILE_SIZE, entry.path.display()
+                file_size, max_file_size, entry.path.display()
             );
         }
         // Still compute schema signature for structured files (it's lightweight)

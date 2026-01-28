@@ -289,6 +289,12 @@ pub struct CompareConfig {
     /// Matches are replaced with `<IGNORED>` before comparison.
     /// Useful for filtering timestamps, UUIDs, etc.
     pub ignore_regex: Option<String>,
+
+    /// Maximum file size for similarity fingerprinting (in bytes)
+    ///
+    /// Files larger than this will use hash-only comparison to save memory.
+    /// If None, a dynamic limit based on system RAM will be calculated.
+    pub max_fingerprint_size: Option<u64>,
 }
 
 impl Default for CompareConfig {
@@ -310,7 +316,9 @@ impl Default for CompareConfig {
             verbose: false,
             exclude_patterns: Vec::new(),
             ignore_columns: Vec::new(),
+            ignore_columns: Vec::new(),
             ignore_regex: None,
+            max_fingerprint_size: None,
         }
     }
 }

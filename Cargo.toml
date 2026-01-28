@@ -51,6 +51,7 @@ chrono = "0.4"
 comfy-table = "7.1"       # Beautiful terminal tables
 indicatif = "0.17"        # Progress bars
 console = "0.15"          # Terminal styling
+sysinfo = "0.30"          # meaningful system information
 
 [profile.release]
 opt-level = 3
