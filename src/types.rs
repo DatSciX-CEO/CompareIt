@@ -271,6 +271,11 @@ pub struct CompareConfig {
     /// Timestamped files are created within this directory.
     pub results_base: PathBuf,
 
+    /// Explicit root output directory (overrides results_base)
+    ///
+    /// If set, results are placed directly here without creating a timestamped subfolder.
+    pub output_root: Option<PathBuf>,
+
     /// Enable verbose output (show all results, diff snippets)
     pub verbose: bool,
 
@@ -313,6 +318,7 @@ impl Default for CompareConfig {
             output_csv: None,
             output_dir: None,
             results_base: PathBuf::from("results"),
+            output_root: None,
             verbose: false,
             exclude_patterns: Vec::new(),
             ignore_columns: Vec::new(),

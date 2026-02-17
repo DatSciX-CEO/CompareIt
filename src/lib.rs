@@ -74,8 +74,19 @@ impl<'a> ComparisonEngine<'a> {
         // ─────────────────────────────────────────────────────────────
         let start_time = Instant::now();
 
-        // Set up automatic results directory using config.results_base
-        let results_dir = ensure_results_dir(&self.config.results_base)?;
+        // Set up results directory
+        // If output_root is set, use it directly (no subfolder).
+        // Otherwise, create a timestamped subfolder under results_base.
+        let results_dir = if let Some(ref root) = self.config.output_root {
+            // Ensure the root directory exists
+            if !root.exists() {
+                fs::create_dir_all(root).context("Failed to create output root directory")?;
+            }
+            root.clone()
+        } else {
+            ensure_results_dir(&self.config.results_base)?
+        };
+
         let (auto_jsonl_path, auto_html_path, auto_artifacts_dir) = get_auto_export_paths(&results_dir);
 
         // Stage 1: Index files

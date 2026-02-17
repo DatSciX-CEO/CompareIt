@@ -120,9 +120,13 @@ enum Commands {
         #[arg(long)]
         out_dir: Option<PathBuf>,
 
-        /// Base directory for results (each run creates a unique subfolder)
+        /// Base directory for automatic results (each run creates a unique subfolder)
         #[arg(short = 'B', long, default_value = "output")]
         results_base: PathBuf,
+
+        /// Explicit output directory (overrides -B, no subfolder created)
+        #[arg(short = 'o', long)]
+        output: Option<PathBuf>,
 
         /// Verbose output
         #[arg(short, long)]
@@ -175,6 +179,7 @@ fn main() -> Result<()> {
             out_csv,
             out_dir,
             results_base,
+            output,
             verbose,
         } => {
             let config = CompareConfig {
@@ -197,6 +202,7 @@ fn main() -> Result<()> {
                 output_csv: out_csv,
                 output_dir: out_dir,
                 results_base,
+                output_root: output,
                 verbose,
                 exclude_patterns: exclude,
                 ignore_columns,
