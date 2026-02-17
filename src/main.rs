@@ -298,7 +298,13 @@ fn run_compare(path1: &PathBuf, path2: &PathBuf, config: &CompareConfig) -> Resu
     println!("\n{}", style("Exports").cyan().bold());
     println!("{}", style("─".repeat(60)).dim());
     
-    let canonical_results = config.results_base.canonicalize().unwrap_or_else(|_| config.results_base.clone());
+    let results_path = if let Some(ref root) = config.output_root {
+        root.clone()
+    } else {
+        config.results_base.clone()
+    };
+    
+    let canonical_results = results_path.canonicalize().unwrap_or_else(|_| results_path);
     println!(
         "  {} {}",
         style("Results Directory:").dim(),

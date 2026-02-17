@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CompareIt Report</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
+            --border: #30363d;
+            --diff-add-bg: rgba(63, 185, 80, 0.15);
+            --diff-del-bg: rgba(248, 81, 73, 0.15);
+        }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            padding: 2rem;
+        }
+        
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        header { margin-bottom: 2rem; }
+        h1 { font-size: 2rem; font-weight: 600; color: var(--text-primary); }
+        .subtitle { color: var(--text-secondary); }
+        
+        /* Dashboard */
+        .dashboard {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+        
+        .pie-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            min-width: 280px;
+        }
+        
+        .pie-container h3 {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .pie-chart {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            margin: 0 auto 1rem;
+        }
+        
+        .pie-legend {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+        
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .legend-dot.identical { background: var(--success); }
+        .legend-dot.different { background: var(--warning); }
+        .legend-dot.error { background: var(--danger); }
+        
+        /* Summary Cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            flex: 1;
+        }
+        
+        .summary-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+        
+        .summary-card .label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .summary-card .value {
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-top: 0.25rem;
+        }
+        
+        .summary-card .value.success { color: var(--success); }
+        .summary-card .value.warning { color: var(--warning); }
+        .summary-card .value.danger { color: var(--danger); }
+        
+        /* Table */
+        .table-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            margin-top: 2rem;
+        }
+        
+        .table-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .table-header h2 { font-size: 1rem; font-weight: 600; }
+        
+        .filter-input {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.5rem 0.75rem;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+        
+        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+        
+        th, td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        th {
+            background: var(--bg-tertiary);
+            font-weight: 600;
+            color: var(--text-secondary);
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        th:hover { color: var(--text-primary); }
+        th.sorted-asc::after { content: ' ▲'; }
+        th.sorted-desc::after { content: ' ▼'; }
+        
+        tr:hover { background: var(--bg-tertiary); }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.125rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        
+        .badge.identical { background: rgba(63, 185, 80, 0.2); color: var(--success); }
+        .badge.different { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
+        .badge.error { background: rgba(248, 81, 73, 0.2); color: var(--danger); }
+        
+        .similarity-bar {
+            width: 60px;
+            height: 6px;
+            background: var(--bg-tertiary);
+            border-radius: 3px;
+            overflow: hidden;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 0.5rem;
+        }
+        
+        .similarity-bar .fill { height: 100%; border-radius: 3px; }
+        .similarity-bar .fill.high { background: var(--success); }
+        .similarity-bar .fill.medium { background: var(--warning); }
+        .similarity-bar .fill.low { background: var(--danger); }
+        
+        .path {
+            max-width: 250px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+            font-size: 0.8125rem;
+        }
+        
+        .btn {
+            background: var(--accent);
+            color: var(--bg-primary);
+            border: none;
+            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        .btn:hover { opacity: 0.9; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            overflow-y: auto;
+            padding: 2rem;
+        }
+        
+        .modal-overlay.active { display: flex; justify-content: center; }
+        
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            width: 100%;
+            max-width: 1200px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .modal-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .modal-header h3 { font-size: 1rem; }
+        
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            line-height: 1;
+        }
+        
+        .modal-close:hover { color: var(--text-primary); }
+        
+        .modal-body {
+            padding: 1rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+        
+        /* Diff View */
+        .diff-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+            font-size: 0.8125rem;
+        }
+        
+        .diff-panel {
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .diff-panel-header {
+            padding: 0.5rem 1rem;
+            background: var(--bg-primary);
+            font-weight: 600;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+        
+        .diff-content {
+            padding: 0.5rem 0;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .diff-line {
+            display: flex;
+            min-height: 1.4em;
+            padding: 0 1rem;
+        }
+        
+        .diff-line-num {
+            width: 40px;
+            color: var(--text-secondary);
+            text-align: right;
+            padding-right: 1rem;
+            user-select: none;
+        }
+        
+        .diff-line-content {
+            flex: 1;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        .diff-line.added { background: var(--diff-add-bg); }
+        .diff-line.removed { background: var(--diff-del-bg); }
+        
+        /* Structured Diff */
+        .struct-diff {
+            overflow-x: auto;
+        }
+        
+        .struct-diff table {
+            min-width: 100%;
+        }
+        
+        .struct-diff th {
+            position: sticky;
+            top: 0;
+            background: var(--bg-tertiary);
+        }
+        
+        .cell-mismatch {
+            background: rgba(248, 81, 73, 0.2);
+            color: var(--danger);
+        }
+        
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        
+        /* Process Stats Section */
+        .process-stats {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .process-stats h3 {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 1rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-item .stat-value {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .stat-item .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+        
+        .stat-item .stat-value.accent { color: var(--accent); }
+        .stat-item .stat-value.success { color: var(--success); }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>CompareIt Report</h1>
+            <p class="subtitle">File comparison analysis</p>
+        </header>
+
+        <div class="dashboard">
+            <div class="pie-container">
+                <h3>Status Distribution</h3>
+                <div class="pie-chart" style="background: conic-gradient(
+                    var(--success) 0deg 0deg,
+                    var(--warning) 0deg 360deg,
+                    var(--danger) 360deg 360deg
+                );"></div>
+                <div class="pie-legend">
+                    <div class="legend-item">
+                        <span class="legend-dot identical"></span>
+                        <span>Identical (0 - 0%)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot different"></span>
+                        <span>Different (1 - 100%)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot error"></span>
+                        <span>Errors (0 - 0%)</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <div class="label">Pairs Compared</div>
+                    <div class="value">1</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">Identical</div>
+                    <div class="value success">0</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">Different</div>
+                    <div class="value warning">1</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">Errors</div>
+                    <div class="value">0</div>
+                </div>
+                <div class="summary-card">
+                    <div class="label">Avg Similarity</div>
+                    <div class="value">0.0%</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="process-stats">
+            <h3>Run Details</h3>
+            <div class="stats-grid">
+
+                <div class="stat-item">
+                    <div class="stat-value accent">346ms</div>
+                    <div class="stat-label">Execution Time</div>
+                </div>
+
+                <div class="stat-item">
+                    <div class="stat-value success">0.0 MB/s</div>
+                    <div class="stat-label">Throughput</div>
+                </div>
+
+                <div class="stat-item">
+                    <div class="stat-value">25 B</div>
+                    <div class="stat-label">Data Processed</div>
+                </div>
+
+                <div class="stat-item">
+                    <div class="stat-value">15.0 MB</div>
+                    <div class="stat-label">Memory Used</div>
+                </div>
+
+                <div class="stat-item">
+                    <div class="stat-value">Auto</div>
+                    <div class="stat-label">Mode</div>
+                </div>
+
+                <div class="stat-item">
+                    <div class="stat-value">Diff</div>
+                    <div class="stat-label">Algorithm</div>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="table-container">
+            <div class="table-header">
+                <h2>Comparison Results</h2>
+                <input type="text" class="filter-input" id="table-filter" placeholder="Filter results...">
+            </div>
+            <table id="results-table">
+                <thead>
+                    <tr>
+                        <th data-sort="status">Status</th>
+                        <th data-sort="file1">File 1</th>
+                        <th data-sort="file2">File 2</th>
+                        <th data-sort="similarity">Similarity</th>
+                        <th data-sort="type">Type</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr data-idx="0">
+                        <td><span class="badge different">Different</span></td>
+                        <td class="path" title="test_a.txt">test_a.txt</td>
+                        <td class="path" title="test_b.txt">test_b.txt</td>
+                        <td>
+                            <span class="similarity-bar"><span class="fill low" style="width: 0%"></span></span>
+                            0.0%
+                        </td>
+                        <td>text</td>
+                        <td><button class="btn" onclick="showDiff(0)">View Diff</button> <a href="test_explicit_output_2\artifacts/patches/b56e4b9b4c157ca6_e1b3a36c1c362cad.diff" target="_blank">patch</a></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="modal-overlay" id="diff-modal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 id="modal-title">Diff View</h3>
+                    <button class="modal-close" onclick="closeDiff()">&times;</button>
+                </div>
+                <div class="modal-body" id="modal-body">
+                </div>
+            </div>
+        </div>
+
+    <script>
+        const diffData = [{"type":"text","file1":"test_a.txt","file2":"test_b.txt","diff":"--- test_a.txt\n+++ test_b.txt\n@@ -1 +1 @@\n-Hello World\n+Hello Rust\n"}];
+    </script>
+
+    <script>
+        // Table sorting
+        document.querySelectorAll('th[data-sort]').forEach(th => {
+            th.addEventListener('click', () => {
+                const table = th.closest('table');
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+                const col = th.cellIndex;
+                const isAsc = th.classList.contains('sorted-asc');
+                
+                table.querySelectorAll('th').forEach(h => {
+                    h.classList.remove('sorted-asc', 'sorted-desc');
+                });
+                
+                th.classList.add(isAsc ? 'sorted-desc' : 'sorted-asc');
+                
+                rows.sort((a, b) => {
+                    let aVal = a.cells[col].textContent.trim();
+                    let bVal = b.cells[col].textContent.trim();
+                    
+                    const aNum = parseFloat(aVal.replace('%', ''));
+                    const bNum = parseFloat(bVal.replace('%', ''));
+                    
+                    if (!isNaN(aNum) && !isNaN(bNum)) {
+                        return isAsc ? bNum - aNum : aNum - bNum;
+                    }
+                    
+                    return isAsc ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
+                });
+                
+                rows.forEach(row => tbody.appendChild(row));
+            });
+        });
+        
+        // Table filtering
+        document.getElementById('table-filter').addEventListener('input', (e) => {
+            const filter = e.target.value.toLowerCase();
+            const rows = document.querySelectorAll('#results-table tbody tr');
+            
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(filter) ? '' : 'none';
+            });
+        });
+        
+        // Diff modal
+        function showDiff(idx) {
+            const data = diffData[idx];
+            const modal = document.getElementById('diff-modal');
+            const title = document.getElementById('modal-title');
+            const body = document.getElementById('modal-body');
+            
+            if (data.type === 'text') {
+                title.textContent = 'Text Diff';
+                body.innerHTML = renderTextDiff(data);
+            } else if (data.type === 'structured') {
+                title.textContent = 'Structured Diff';
+                body.innerHTML = renderStructuredDiff(data);
+            } else {
+                body.innerHTML = '<p>No diff available</p>';
+            }
+            
+            modal.classList.add('active');
+        }
+        
+        function closeDiff() {
+            document.getElementById('diff-modal').classList.remove('active');
+        }
+        
+        // Close on escape or click outside
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeDiff();
+        });
+        
+        document.getElementById('diff-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'diff-modal') closeDiff();
+        });
+        
+        function renderTextDiff(data) {
+            const lines = data.diff.split('\n');
+            let file1Lines = [];
+            let file2Lines = [];
+            let lineNum1 = 0;
+            let lineNum2 = 0;
+            
+            for (const line of lines) {
+                if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('@@')) {
+                    continue;
+                }
+                
+                if (line.startsWith('-')) {
+                    lineNum1++;
+                    file1Lines.push({ num: lineNum1, content: line.slice(1), type: 'removed' });
+                    file2Lines.push({ num: '', content: '', type: 'empty' });
+                } else if (line.startsWith('+')) {
+                    lineNum2++;
+                    file1Lines.push({ num: '', content: '', type: 'empty' });
+                    file2Lines.push({ num: lineNum2, content: line.slice(1), type: 'added' });
+                } else if (line.startsWith(' ')) {
+                    lineNum1++;
+                    lineNum2++;
+                    file1Lines.push({ num: lineNum1, content: line.slice(1), type: '' });
+                    file2Lines.push({ num: lineNum2, content: line.slice(1), type: '' });
+                }
+            }
+            
+            return `
+                <div class="diff-container">
+                    <div class="diff-panel">
+                        <div class="diff-panel-header">${escapeHtml(data.file1)}</div>
+                        <div class="diff-content">
+                            ${file1Lines.map(l => `
+                                <div class="diff-line ${l.type}">
+                                    <span class="diff-line-num">${l.num}</span>
+                                    <span class="diff-line-content">${escapeHtml(l.content)}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="diff-panel">
+                        <div class="diff-panel-header">${escapeHtml(data.file2)}</div>
+                        <div class="diff-content">
+                            ${file2Lines.map(l => `
+                                <div class="diff-line ${l.type}">
+                                    <span class="diff-line-num">${l.num}</span>
+                                    <span class="diff-line-content">${escapeHtml(l.content)}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderStructuredDiff(data) {
+            if (!data.mismatches || data.mismatches.length === 0) {
+                let html = '<p>No field mismatches found.</p>';
+                
+                if (data.cols_only_1 && data.cols_only_1.length > 0) {
+                    html += `<p><strong>Columns only in File 1:</strong> ${data.cols_only_1.join(', ')}</p>`;
+                }
+                if (data.cols_only_2 && data.cols_only_2.length > 0) {
+                    html += `<p><strong>Columns only in File 2:</strong> ${data.cols_only_2.join(', ')}</p>`;
+                }
+                
+                return html;
+            }
+            
+            let html = '<div class="struct-diff"><table><thead><tr><th>Column</th><th>Mismatches</th><th>Sample Key</th><th>File 1 Value</th><th>File 2 Value</th></tr></thead><tbody>';
+            
+            for (const col of data.mismatches) {
+                const sample = col.sample_mismatches[0] || {};
+                html += `
+                    <tr>
+                        <td><strong>${escapeHtml(col.column_name)}</strong></td>
+                        <td>${col.mismatch_count}</td>
+                        <td>${escapeHtml(sample.key || '')}</td>
+                        <td class="cell-mismatch">${escapeHtml(sample.value1 || '')}</td>
+                        <td class="cell-mismatch">${escapeHtml(sample.value2 || '')}</td>
+                    </tr>
+                `;
+            }
+            
+            html += '</tbody></table></div>';
+            return html;
+        }
+        
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+
+    </div>
+</body>
+</html>
